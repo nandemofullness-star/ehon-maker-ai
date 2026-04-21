@@ -21,6 +21,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { MaterialIcons } from "@expo/vector-icons";
 import { trpc } from "@/lib/trpc";
+import { CompareModal } from "@/components/compare-modal";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
@@ -28,9 +29,17 @@ const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
 interface PageItem {
   id: string;
   uri: string;
+  originalUri: string | null; // stores the pre-AI photo URI for comparison
   text: string;
   isProcessing: boolean;
   isRemade: boolean;
+}
+
+interface CompareState {
+  pageId: string;
+  originalUri: string;
+  remadeUri: string;
+  pageNumber: number;
 }
 
 export default function HomeScreen() {
@@ -42,6 +51,7 @@ export default function HomeScreen() {
 
   const remakeImageMutation = trpc.book.remakeImage.useMutation();
   const generatePdfMutation = trpc.book.generatePdf.useMutation();
+  const [compareState, setCompareState] = useState<CompareState | null>(null);
 
   const pickImages = useCallback(async () => {
     if (isBatchProcessing || isGeneratingPdf) return;
@@ -54,6 +64,7 @@ export default function HomeScreen() {
       const newPages: PageItem[] = result.assets.map((asset) => ({
         id: `${Date.now()}_${Math.random().toString(36).substring(7)}`,
         uri: asset.uri,
+        originalUri: null,
         text: "",
         isProcessing: false,
         isRemade: false,
@@ -124,14 +135,23 @@ export default function HomeScreen() {
       );
 
       try {
+        const originalUri = page.uri; // save current URI before overwriting
         const newUri = await remakeSinglePage(page);
         setPages((prev) =>
           prev.map((p) =>
             p.id === pageId
-              ? { ...p, uri: newUri, isProcessing: false, isRemade: true }
+              ? { ...p, uri: newUri, originalUri, isProcessing: false, isRemade: true }
               : p
           )
         );
+        // Auto-open compare modal after individual remake
+        const index = pages.findIndex((p) => p.id === pageId);
+        setCompareState({
+          pageId,
+          originalUri,
+          remadeUri: newUri,
+          pageNumber: index + 1,
+        });
       } catch (err: any) {
         console.error(`ページのリメイク失敗:`, err);
         Alert.alert("エラー", `AI変換に失敗しました: ${err.message}`);
@@ -159,11 +179,12 @@ export default function HomeScreen() {
       );
 
       try {
+        const originalUri = page.uri;
         const newUri = await remakeSinglePage(page);
         setPages((prev) =>
           prev.map((p) =>
             p.id === page.id
-              ? { ...p, uri: newUri, isProcessing: false, isRemade: true }
+              ? { ...p, uri: newUri, originalUri, isProcessing: false, isRemade: true }
               : p
           )
         );
@@ -290,32 +311,57 @@ export default function HomeScreen() {
             editable={!isBatchProcessing && !isGeneratingPdf}
           />
 
-        {/* Individual AI remake button */}
+        {/* Individual AI remake button + Compare button row */}
           {!item.isProcessing && (
-            <TouchableOpacity
-              onPress={() => remakePageById(item.id)}
-              disabled={isBatchProcessing || isGeneratingPdf}
-              style={[
-                styles.singleAiButton,
-                { backgroundColor: item.isRemade ? `${colors.success}22` : `${colors.primary}18` },
-                (isBatchProcessing || isGeneratingPdf) && styles.disabledButton,
-              ]}
-              activeOpacity={0.7}
-            >
-              <MaterialIcons
-                name={item.isRemade ? "refresh" : "auto-awesome"}
-                size={13}
-                color={item.isRemade ? colors.success : colors.primary}
-              />
-              <Text
+            <View style={styles.cardButtonRow}>
+              <TouchableOpacity
+                onPress={() => remakePageById(item.id)}
+                disabled={isBatchProcessing || isGeneratingPdf}
                 style={[
-                  styles.singleAiButtonText,
-                  { color: item.isRemade ? colors.success : colors.primary },
+                  styles.singleAiButton,
+                  { flex: 1, backgroundColor: item.isRemade ? `${colors.success}22` : `${colors.primary}18` },
+                  (isBatchProcessing || isGeneratingPdf) && styles.disabledButton,
                 ]}
+                activeOpacity={0.7}
               >
-                {item.isRemade ? "再変換" : "AI変換"}
-              </Text>
-            </TouchableOpacity>
+                <MaterialIcons
+                  name={item.isRemade ? "refresh" : "auto-awesome"}
+                  size={13}
+                  color={item.isRemade ? colors.success : colors.primary}
+                />
+                <Text
+                  style={[
+                    styles.singleAiButtonText,
+                    { color: item.isRemade ? colors.success : colors.primary },
+                  ]}
+                >
+                  {item.isRemade ? "再変換" : "AI変換"}
+                </Text>
+              </TouchableOpacity>
+              {/* Compare button: only shown when remade and originalUri exists */}
+              {item.isRemade && item.originalUri && (
+                <TouchableOpacity
+                  onPress={() =>
+                    setCompareState({
+                      pageId: item.id,
+                      originalUri: item.originalUri!,
+                      remadeUri: item.uri,
+                      pageNumber: index + 1,
+                    })
+                  }
+                  style={[
+                    styles.singleAiButton,
+                    { backgroundColor: `${colors.primary}14` },
+                  ]}
+                  activeOpacity={0.7}
+                >
+                  <MaterialIcons name="compare" size={13} color={colors.primary} />
+                  <Text style={[styles.singleAiButtonText, { color: colors.primary }]}>
+                    比較
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
           )}
 
           {/* Action buttons */}
@@ -533,6 +579,32 @@ export default function HomeScreen() {
         }
         renderItem={renderPageCard}
       />
+
+      {/* Compare Modal */}
+      {compareState && (
+        <CompareModal
+          visible={!!compareState}
+          onClose={() => setCompareState(null)}
+          originalUri={compareState.originalUri}
+          remadeUri={compareState.remadeUri}
+          pageNumber={compareState.pageNumber}
+          onAccept={() => {
+            // Keep the AI-remade image (already set), just close
+            setCompareState(null);
+          }}
+          onReject={() => {
+            // Revert to original URI
+            setPages((prev) =>
+              prev.map((p) =>
+                p.id === compareState.pageId
+                  ? { ...p, uri: compareState.originalUri, isRemade: false, originalUri: null }
+                  : p
+              )
+            );
+            setCompareState(null);
+          }}
+        />
+      )}
     </ScreenContainer>
   );
 }
@@ -796,6 +868,11 @@ const styles = StyleSheet.create({
   disabledButton: {
     opacity: 0.4,
   },
+  cardButtonRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: 4,
+  },
   singleAiButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -804,7 +881,6 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 10,
     borderRadius: 10,
-    marginBottom: 4,
   },
   singleAiButtonText: {
     fontSize: 12,
