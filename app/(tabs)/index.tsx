@@ -30,6 +30,8 @@ import { useProjectStore, type SavedProject } from "@/hooks/use-project-store";
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
 
+type PageType = "cover" | "back-cover" | "inner";
+
 interface PageItem {
   id: string;
   uri: string;
@@ -37,6 +39,7 @@ interface PageItem {
   text: string;
   isProcessing: boolean;
   isRemade: boolean;
+  pageType: PageType; // cover | back-cover | inner
 }
 
 interface CompareState {
@@ -44,6 +47,19 @@ interface CompareState {
   originalUri: string;
   remadeUri: string;
   pageNumber: number;
+}
+
+/** Assign cover / back-cover / inner pageType based on position */
+function assignPageTypes(pages: PageItem[]): PageItem[] {
+  return pages.map((p, i) => ({
+    ...p,
+    pageType:
+      i === 0 && pages.length >= 1
+        ? "cover"
+        : i === pages.length - 1 && pages.length >= 2
+        ? "back-cover"
+        : "inner",
+  }));
 }
 
 export default function HomeScreen() {
@@ -133,10 +149,13 @@ export default function HomeScreen() {
   /** Load a project into the editor (called from projects tab via navigation params) */
   const loadProjectIntoEditor = useCallback((project: SavedProject) => {
     setPages(
-      project.pages.map((p) => ({
-        ...p,
-        isProcessing: false,
-      }))
+      assignPageTypes(
+        project.pages.map((p) => ({
+          ...p,
+          pageType: (p as any).pageType ?? "inner" as PageType,
+          isProcessing: false,
+        }))
+      )
     );
     setSelectedStyleId(project.drawingStyleId);
     setCurrentProjectId(project.id);
@@ -177,7 +196,7 @@ export default function HomeScreen() {
       quality: 0.8,
     });
     if (!result.canceled && result.assets.length > 0) {
-      const newPages: PageItem[] = result.assets.map((asset) => ({
+      const newPages: Omit<PageItem, "pageType">[] = result.assets.map((asset) => ({
         id: `${Date.now()}_${Math.random().toString(36).substring(7)}`,
         uri: asset.uri,
         originalUri: null,
@@ -185,14 +204,17 @@ export default function HomeScreen() {
         isProcessing: false,
         isRemade: false,
       }));
-      setPages((prev) => [...prev, ...newPages]);
+      setPages((prev) => {
+        const combined = [...prev, ...newPages] as PageItem[];
+        return assignPageTypes(combined);
+      });
     }
   }, [isBatchProcessing, isGeneratingPdf]);
 
   const removePage = useCallback(
     (id: string) => {
       if (isBatchProcessing) return;
-      setPages((prev) => prev.filter((p) => p.id !== id));
+      setPages((prev) => assignPageTypes(prev.filter((p) => p.id !== id)));
     },
     [isBatchProcessing]
   );
@@ -206,7 +228,7 @@ export default function HomeScreen() {
         const newPages = [...prev];
         const targetIndex = direction === "up" ? index - 1 : index + 1;
         [newPages[index], newPages[targetIndex]] = [newPages[targetIndex], newPages[index]];
-        return newPages;
+        return assignPageTypes(newPages);
       });
     },
     [isBatchProcessing, pages.length]
@@ -334,13 +356,13 @@ export default function HomeScreen() {
 
     try {
       // Encode all images to base64
-      const imageDataList: { base64: string; text: string }[] = [];
+      const imageDataList: { base64: string; text: string; pageType: PageType }[] = [];
       for (let i = 0; i < pages.length; i++) {
         setProgress({ current: i + 1, total: pages.length });
         const base64 = await FileSystem.readAsStringAsync(pages[i].uri, {
           encoding: FileSystem.EncodingType.Base64,
         });
-        imageDataList.push({ base64, text: pages[i].text });
+        imageDataList.push({ base64, text: pages[i].text, pageType: pages[i].pageType });
       }
 
       // Generate PDF via server
@@ -386,12 +408,45 @@ export default function HomeScreen() {
             style={[styles.image, item.isProcessing && styles.imageProcessing]}
             contentFit="cover"
           />
-          {/* Page number badge */}
-          <View style={[styles.pageBadge, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.pageBadgeText, { color: colors.foreground }]}>
-              P.{index + 1}
-            </Text>
-          </View>
+          {/* Cover / Back-cover overlay */}
+          {item.pageType === "cover" && !item.isProcessing && (
+            <View style={styles.coverOverlay}>
+              <Text style={styles.coverOverlayText} numberOfLines={3}>
+                {item.text || "タイトルを入力"}
+              </Text>
+            </View>
+          )}
+          {item.pageType === "back-cover" && !item.isProcessing && (
+            <View style={styles.backCoverOverlay}>
+              <Text style={styles.backCoverOverlayText} numberOfLines={2}>
+                {item.text || "著者名を入力"}
+              </Text>
+            </View>
+          )}
+          {/* Cover type badge */}
+          {item.pageType !== "inner" && !item.isProcessing && (
+            <View
+              style={[
+                styles.coverTypeBadge,
+                {
+                  backgroundColor:
+                    item.pageType === "cover" ? "#4F46E5" : "#7C3AED",
+                },
+              ]}
+            >
+              <Text style={styles.coverTypeBadgeText}>
+                {item.pageType === "cover" ? "表紙" : "裏表紙"}
+              </Text>
+            </View>
+          )}
+          {/* Page number badge (inner pages only) */}
+          {item.pageType === "inner" && (
+            <View style={[styles.pageBadge, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.pageBadgeText, { color: colors.foreground }]}>
+                P.{index + 1}
+              </Text>
+            </View>
+          )}
           {/* Remade badge */}
           {item.isRemade && !item.isProcessing && (
             <View style={[styles.remadeBadge, { backgroundColor: colors.success }]}>
@@ -414,7 +469,13 @@ export default function HomeScreen() {
           <TextInput
             value={item.text}
             onChangeText={(t) => handleTextChange(item.id, t)}
-            placeholder="テキストを入力..."
+            placeholder={
+              item.pageType === "cover"
+                ? "絵本のタイトルを入力..."
+                : item.pageType === "back-cover"
+                ? "著者名・あとがきを入力..."
+                : "テキストを入力..."
+            }
             placeholderTextColor={colors.muted}
             style={[
               styles.textInput,
@@ -1075,5 +1136,63 @@ const styles = StyleSheet.create({
   saveButtonText: {
     fontSize: 12,
     fontWeight: "700",
+  },
+  coverOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: "60%",
+    backgroundColor: "rgba(26,26,46,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  coverOverlayText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "900",
+    textAlign: "center",
+    lineHeight: 17,
+    textShadowColor: "rgba(0,0,0,0.6)",
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+  },
+  backCoverOverlay: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: "40%",
+    backgroundColor: "rgba(15,15,26,0.5)",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+  },
+  backCoverOverlayText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 15,
+    textShadowColor: "rgba(0,0,0,0.5)",
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
+  },
+  coverTypeBadge: {
+    position: "absolute",
+    top: 6,
+    left: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  coverTypeBadgeText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
 });

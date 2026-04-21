@@ -6,8 +6,10 @@ import { storagePut } from "./storage";
 // KDP standard: 8.5 inches at 300 DPI = 2550px, 215.9mm
 const KDP_SIZE_MM = 215.9;
 
+type PageType = "cover" | "back-cover" | "inner";
+
 async function generatePdfBuffer(
-  pages: Array<{ base64: string; text: string }>
+  pages: Array<{ base64: string; text: string; pageType?: PageType }>
 ): Promise<Buffer> {
   // Dynamic import for pdfkit (CommonJS module)
   const PDFDocument = (await import("pdfkit")).default;
@@ -29,10 +31,11 @@ async function generatePdfBuffer(
 
     for (let i = 0; i < pages.length; i++) {
       const page = pages[i];
+      const pageType: PageType = page.pageType ?? "inner";
       doc.addPage({ size: [pageSize, pageSize], margin: 0 });
 
       try {
-        // Decode base64 image and add to PDF
+        // Draw full-bleed image
         const imageBuffer = Buffer.from(page.base64, "base64");
         doc.image(imageBuffer, 0, 0, {
           width: pageSize,
@@ -40,32 +43,130 @@ async function generatePdfBuffer(
           cover: [pageSize, pageSize],
         });
 
-        // Add text if present
-        if (page.text && page.text.trim()) {
-          const fontSize = pageSize * 0.04;
-          const margin = pageSize * 0.08;
-
-          // Text shadow/outline for legibility
+        if (pageType === "cover") {
+          // ---- COVER layout ----
+          // Dark gradient overlay (top 60%)
           doc
-            .fontSize(fontSize)
+            .rect(0, 0, pageSize, pageSize * 0.6)
+            .fillOpacity(0.45)
+            .fill("#1a1a2e");
+          doc.fillOpacity(1);
+
+          if (page.text && page.text.trim()) {
+            const titleFontSize = pageSize * 0.11;
+            const margin = pageSize * 0.08;
+            const titleY = pageSize * 0.12;
+
+            // Shadow pass
+            doc
+              .fontSize(titleFontSize)
+              .fillColor("black")
+              .fillOpacity(0.4)
+              .text(page.text, margin + 3, titleY + 3, {
+                width: pageSize - margin * 2,
+                align: "center",
+              });
+
+            // Main title
+            doc
+              .fillColor("white")
+              .fillOpacity(1)
+              .text(page.text, margin, titleY, {
+                width: pageSize - margin * 2,
+                align: "center",
+              });
+          }
+
+          // "表紙" label badge at bottom-right
+          const badgeFontSize = pageSize * 0.028;
+          const badgeW = pageSize * 0.18;
+          const badgeH = pageSize * 0.055;
+          const badgeX = pageSize - badgeW - pageSize * 0.04;
+          const badgeY = pageSize - badgeH - pageSize * 0.04;
+          doc.roundedRect(badgeX, badgeY, badgeW, badgeH, 6).fillOpacity(0.75).fill("#4F46E5");
+          doc
             .fillColor("white")
-            .opacity(0.9)
-            .text(page.text, margin, pageSize - margin - fontSize * 2, {
-              width: pageSize - margin * 2,
+            .fillOpacity(1)
+            .fontSize(badgeFontSize)
+            .text("表紙", badgeX, badgeY + (badgeH - badgeFontSize) / 2, {
+              width: badgeW,
               align: "center",
             });
-
+        } else if (pageType === "back-cover") {
+          // ---- BACK COVER layout ----
+          // Gradient overlay at bottom 50%
           doc
-            .fillColor("#2D3748")
-            .opacity(1)
-            .text(page.text, margin, pageSize - margin - fontSize * 2, {
-              width: pageSize - margin * 2,
+            .rect(0, pageSize * 0.5, pageSize, pageSize * 0.5)
+            .fillOpacity(0.5)
+            .fill("#0f0f1a");
+          doc.fillOpacity(1);
+
+          if (page.text && page.text.trim()) {
+            const authorFontSize = pageSize * 0.055;
+            const margin = pageSize * 0.08;
+            const authorY = pageSize * 0.72;
+
+            // Shadow
+            doc
+              .fontSize(authorFontSize)
+              .fillColor("black")
+              .fillOpacity(0.35)
+              .text(page.text, margin + 2, authorY + 2, {
+                width: pageSize - margin * 2,
+                align: "center",
+              });
+
+            // Author name
+            doc
+              .fillColor("white")
+              .fillOpacity(1)
+              .text(page.text, margin, authorY, {
+                width: pageSize - margin * 2,
+                align: "center",
+              });
+          }
+
+          // "裏表紙" label badge at bottom-right
+          const badgeFontSize = pageSize * 0.028;
+          const badgeW = pageSize * 0.22;
+          const badgeH = pageSize * 0.055;
+          const badgeX = pageSize - badgeW - pageSize * 0.04;
+          const badgeY = pageSize - badgeH - pageSize * 0.04;
+          doc.roundedRect(badgeX, badgeY, badgeW, badgeH, 6).fillOpacity(0.75).fill("#7C3AED");
+          doc
+            .fillColor("white")
+            .fillOpacity(1)
+            .fontSize(badgeFontSize)
+            .text("裏表紙", badgeX, badgeY + (badgeH - badgeFontSize) / 2, {
+              width: badgeW,
               align: "center",
             });
+        } else {
+          // ---- INNER PAGE layout (original behavior) ----
+          if (page.text && page.text.trim()) {
+            const fontSize = pageSize * 0.04;
+            const margin = pageSize * 0.08;
+
+            doc
+              .fontSize(fontSize)
+              .fillColor("white")
+              .opacity(0.9)
+              .text(page.text, margin, pageSize - margin - fontSize * 2, {
+                width: pageSize - margin * 2,
+                align: "center",
+              });
+
+            doc
+              .fillColor("#2D3748")
+              .opacity(1)
+              .text(page.text, margin, pageSize - margin - fontSize * 2, {
+                width: pageSize - margin * 2,
+                align: "center",
+              });
+          }
         }
       } catch (err) {
         console.error(`Page ${i + 1} image error:`, err);
-        // Add blank white page on error
         doc.rect(0, 0, pageSize, pageSize).fill("white");
       }
     }
@@ -130,6 +231,7 @@ export const bookRouter = router({
           z.object({
             base64: z.string(),
             text: z.string(),
+            pageType: z.enum(["cover", "back-cover", "inner"]).optional(),
           })
         ),
       })
