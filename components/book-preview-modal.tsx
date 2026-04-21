@@ -10,6 +10,7 @@ import {
   StatusBar,
   NativeSyntheticEvent,
   NativeScrollEvent,
+  ActivityIndicator,
 } from "react-native";
 import { Image } from "expo-image";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -31,6 +32,8 @@ interface BookPreviewModalProps {
   pages: PreviewPage[];
   bookTitle?: string;
   onClose: () => void;
+  /** Called when user taps "PDF出力" inside the preview modal */
+  onGeneratePdf?: () => Promise<void>;
 }
 
 const { width: SCREEN_W } = Dimensions.get("window");
@@ -119,12 +122,24 @@ export function BookPreviewModal({
   pages,
   bookTitle,
   onClose,
+  onGeneratePdf,
 }: BookPreviewModalProps) {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
   const pagerRef = useRef<{ setPage: (page: number) => void }>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>("swipe");
+  const [isPdfGenerating, setIsPdfGenerating] = useState(false);
+
+  const handleGeneratePdf = useCallback(async () => {
+    if (!onGeneratePdf || isPdfGenerating) return;
+    setIsPdfGenerating(true);
+    try {
+      await onGeneratePdf();
+    } finally {
+      setIsPdfGenerating(false);
+    }
+  }, [onGeneratePdf, isPdfGenerating]);
 
   // ── scroll mode: track current page from offset ──
   const handleScroll = useCallback(
@@ -309,12 +324,7 @@ export function BookPreviewModal({
 
         {/* ── Progress dots (both modes, ≤24 pages) ── */}
         {pages.length > 1 && pages.length <= 24 && (
-          <View
-            style={[
-              styles.dotsContainer,
-              { paddingBottom: insets.bottom + 8 },
-            ]}
-          >
+          <View style={styles.dotsContainer}>
             {pages.map((_, i) => (
               <View
                 key={i}
@@ -324,6 +334,35 @@ export function BookPreviewModal({
                 ]}
               />
             ))}
+          </View>
+        )}
+
+        {/* ── PDF Output Footer ── */}
+        {onGeneratePdf && pages.length > 0 && (
+          <View
+            style={[
+              styles.pdfFooter,
+              { paddingBottom: Math.max(insets.bottom, 12) },
+            ]}
+          >
+            <TouchableOpacity
+              onPress={handleGeneratePdf}
+              disabled={isPdfGenerating}
+              style={[
+                styles.pdfButton,
+                isPdfGenerating && styles.pdfButtonDisabled,
+              ]}
+              activeOpacity={0.8}
+            >
+              {isPdfGenerating ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <MaterialIcons name="picture-as-pdf" size={20} color="#fff" />
+              )}
+              <Text style={styles.pdfButtonText}>
+                {isPdfGenerating ? "PDF生成中..." : "このままPDF出力"}
+              </Text>
+            </TouchableOpacity>
           </View>
         )}
       </View>
@@ -581,5 +620,31 @@ const styles = StyleSheet.create({
   },
   dotInactive: {
     backgroundColor: "rgba(255,255,255,0.2)",
+  },
+  // PDF footer
+  pdfFooter: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.08)",
+  },
+  pdfButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#4F46E5",
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+  },
+  pdfButtonDisabled: {
+    opacity: 0.55,
+  },
+  pdfButtonText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "700",
+    letterSpacing: 0.3,
   },
 });

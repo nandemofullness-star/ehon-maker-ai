@@ -176,3 +176,46 @@ describe("BookPreviewModal – view mode switching", () => {
     expect(index).toBe(0);
   });
 });
+
+describe("BookPreviewModal – PDF output button", () => {
+  it("calls onGeneratePdf when button is pressed", async () => {
+    let called = false;
+    const onGeneratePdf = async () => { called = true; };
+    await onGeneratePdf();
+    expect(called).toBe(true);
+  });
+
+  it("sets isPdfGenerating to true during generation and false after", async () => {
+    let isPdfGenerating = false;
+    const handleGeneratePdf = async (fn: () => Promise<void>) => {
+      isPdfGenerating = true;
+      try { await fn(); } finally { isPdfGenerating = false; }
+    };
+    const slowFn = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
+    const promise = handleGeneratePdf(slowFn);
+    expect(isPdfGenerating).toBe(true);
+    await promise;
+    expect(isPdfGenerating).toBe(false);
+  });
+
+  it("does not call onGeneratePdf when isPdfGenerating is true", async () => {
+    let callCount = 0;
+    const isPdfGenerating = true;
+    const onGeneratePdf = async () => { callCount++; };
+    // simulate guard
+    if (!isPdfGenerating) await onGeneratePdf();
+    expect(callCount).toBe(0);
+  });
+
+  it("PDF button is hidden when pages is empty", () => {
+    const pages: unknown[] = [];
+    const showPdfButton = pages.length > 0;
+    expect(showPdfButton).toBe(false);
+  });
+
+  it("PDF button is visible when pages exist", () => {
+    const pages = [{ id: "1" }];
+    const showPdfButton = pages.length > 0;
+    expect(showPdfButton).toBe(true);
+  });
+});

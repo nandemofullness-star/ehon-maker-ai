@@ -833,6 +833,7 @@ export default function HomeScreen() {
         pages={pages}
         bookTitle={currentProjectTitle || undefined}
         onClose={() => setIsPreviewOpen(false)}
+        onGeneratePdf={generatePDF}
       />
     </ScreenContainer>
   );

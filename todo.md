@@ -86,3 +86,9 @@
 - [x] 左右矢印ナビゲーションボタン（無効時は半透明表示）
 - [x] 現在ページ番号の更新（onPageSelectedイベント）
 - [x] モード切り替え時にインデックスをリセット
+
+## プレビューからPDF直接出力
+- [x] BookPreviewModalProps に onGeneratePdf コールバックを追加
+- [x] モーダルフッターに「このままPDF出力」ボタンを追加（生成中はスピナー表示・無効化）
+- [x] ホーム画面から generatePDF 関数を onGeneratePdf としてモーダルに渡す
+- [x] PDF生成中はボタンを無効化（isPdfGeneratingフラグ）
