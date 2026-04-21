@@ -4,7 +4,6 @@ import {
   View,
   Text,
   TouchableOpacity,
-  FlatList,
   TextInput,
   Alert,
   ActivityIndicator,
@@ -13,6 +12,7 @@ import {
   ScrollView,
   Platform,
 } from "react-native";
+import { DraggableList } from "@/components/draggable-list";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -396,11 +396,12 @@ export default function HomeScreen() {
   }, [pages]);
 
   const renderPageCard = useCallback(
-    ({ item, index }: { item: PageItem; index: number }) => (
+    ({ item, index, isActive, drag }: { item: PageItem; index: number; isActive: boolean; drag: () => void }) => (
       <View
         style={[
           styles.card,
           { backgroundColor: colors.surface, borderColor: colors.border },
+          isActive && styles.cardDragging,
         ]}
       >
         {/* Image Preview */}
@@ -546,42 +547,23 @@ export default function HomeScreen() {
 
           {/* Action buttons */}
           <View style={styles.cardActions}>
-            <View style={styles.moveButtons}>
-              <TouchableOpacity
-                onPress={() => movePage(index, "up")}
-                disabled={index === 0 || isBatchProcessing}
-                style={[
-                  styles.iconButton,
-                  { backgroundColor: colors.background },
-                  (index === 0 || isBatchProcessing) && styles.disabledButton,
-                ]}
-              >
-                <MaterialIcons
-                  name="arrow-upward"
-                  size={18}
-                  color={index === 0 || isBatchProcessing ? colors.muted : colors.primary}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => movePage(index, "down")}
-                disabled={index === pages.length - 1 || isBatchProcessing}
-                style={[
-                  styles.iconButton,
-                  { backgroundColor: colors.background },
-                  (index === pages.length - 1 || isBatchProcessing) && styles.disabledButton,
-                ]}
-              >
-                <MaterialIcons
-                  name="arrow-downward"
-                  size={18}
-                  color={
-                    index === pages.length - 1 || isBatchProcessing
-                      ? colors.muted
-                      : colors.primary
-                  }
-                />
-              </TouchableOpacity>
-            </View>
+            {/* Drag handle */}
+            <TouchableOpacity
+              onLongPress={drag}
+              disabled={isBatchProcessing}
+              style={[
+                styles.iconButton,
+                { backgroundColor: colors.background },
+                isBatchProcessing && styles.disabledButton,
+              ]}
+              delayLongPress={150}
+            >
+              <MaterialIcons
+                name="drag-handle"
+                size={18}
+                color={isBatchProcessing ? colors.muted : colors.muted}
+              />
+            </TouchableOpacity>
             <TouchableOpacity
               onPress={() => removePage(item.id)}
               disabled={isBatchProcessing}
@@ -601,7 +583,7 @@ export default function HomeScreen() {
         </View>
       </View>
     ),
-    [colors, pages.length, isBatchProcessing, isGeneratingPdf, movePage, removePage, handleTextChange, remakePageById]
+    [colors, pages.length, isBatchProcessing, isGeneratingPdf, removePage, handleTextChange, remakePageById]
   );
 
   const isProcessing = isBatchProcessing || isGeneratingPdf;
@@ -643,11 +625,10 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      <FlatList
+      <DraggableList
         data={pages}
         keyExtractor={(item) => item.id}
-        numColumns={2}
-        columnWrapperStyle={styles.columnWrapper}
+        onReorder={(newData) => setPages(assignPageTypes(newData))}
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={
           <>
@@ -701,6 +682,13 @@ export default function HomeScreen() {
                     onStyleChange={setSelectedStyleId}
                     disabled={isProcessing}
                   />
+                </View>
+                {/* Drag hint */}
+                <View style={styles.dragHint}>
+                  <MaterialIcons name="drag-handle" size={13} color={colors.muted} />
+                  <Text style={[styles.dragHintText, { color: colors.muted }]}>
+                    カードを長押しでドラッグ並び替え
+                  </Text>
                 </View>
                 {/* Bottom row: action buttons */}
                 <View style={styles.controlButtons}>
@@ -1231,5 +1219,24 @@ const styles = StyleSheet.create({
   previewButtonText: {
     fontSize: 13,
     fontWeight: "700",
+  },
+  cardDragging: {
+    opacity: 0.85,
+    shadowColor: "#4F46E5",
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 10,
+    borderColor: "#4F46E5",
+    borderWidth: 1.5,
+  },
+  dragHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 2,
+  },
+  dragHintText: {
+    fontSize: 11,
+    fontWeight: "600",
   },
 });

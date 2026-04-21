@@ -92,3 +92,12 @@
 - [x] モーダルフッターに「このままPDF出力」ボタンを追加（生成中はスピナー表示・無効化）
 - [x] ホーム画面から generatePDF 関数を onGeneratePdf としてモーダルに渡す
 - [x] PDF生成中はボタンを無効化（isPdfGeneratingフラグ）
+
+## ドラッグ＆ドロップ並び替え
+- [x] react-native-draggable-flatlist のインストール
+- [x] DraggableList ラッパーコンポーネント作成（.native.tsx / .web.tsx プラットフォーム分離）
+- [x] FlatList を DraggableList に置き換え（上下矢印ボタン削除）
+- [x] 長押し（150ms）でドラッグ開始、ドロップで並び替え確定
+- [x] ドラッグ中のカードをインディゴ枠線＋影でハイライト表示（ScaleDecorator 0.96）
+- [x] コントロールバーに「長押しでドラッグ並び替え」ヒントテキストを追加
+- [x] assignPageTypes を onReorder 後に再実行（表紙・裏表紙の自動再割り当て）
