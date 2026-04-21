@@ -22,6 +22,8 @@ import { useColors } from "@/hooks/use-colors";
 import { MaterialIcons } from "@expo/vector-icons";
 import { trpc } from "@/lib/trpc";
 import { CompareModal } from "@/components/compare-modal";
+import { StylePicker } from "@/components/style-picker";
+import { DEFAULT_STYLE_ID } from "@/constants/drawing-styles";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
@@ -52,6 +54,7 @@ export default function HomeScreen() {
   const remakeImageMutation = trpc.book.remakeImage.useMutation();
   const generatePdfMutation = trpc.book.generatePdf.useMutation();
   const [compareState, setCompareState] = useState<CompareState | null>(null);
+  const [selectedStyleId, setSelectedStyleId] = useState(DEFAULT_STYLE_ID);
 
   const pickImages = useCallback(async () => {
     if (isBatchProcessing || isGeneratingPdf) return;
@@ -101,7 +104,7 @@ export default function HomeScreen() {
   }, []);
 
   const remakeSinglePage = useCallback(
-    async (page: PageItem): Promise<string> => {
+    async (page: PageItem, styleId?: string): Promise<string> => {
       // Read image as base64
       const base64 = await FileSystem.readAsStringAsync(page.uri, {
         encoding: FileSystem.EncodingType.Base64,
@@ -110,6 +113,7 @@ export default function HomeScreen() {
       const result = await remakeImageMutation.mutateAsync({
         imageBase64: base64,
         mimeType: "image/jpeg",
+        drawingStyle: styleId ?? selectedStyleId,
       });
 
       if (!result.imageUrl) throw new Error("画像URLが返されませんでした");
@@ -119,7 +123,7 @@ export default function HomeScreen() {
       await FileSystem.downloadAsync(result.imageUrl, localUri);
       return localUri;
     },
-    [remakeImageMutation]
+    [remakeImageMutation, selectedStyleId]
   );
 
   const remakePageById = useCallback(
@@ -485,16 +489,25 @@ export default function HomeScreen() {
                   { backgroundColor: colors.surface, borderColor: colors.border },
                 ]}
               >
-                <View style={styles.controlBarLeft}>
-                  <Text style={[styles.controlBarTitle, { color: colors.foreground }]}>
-                    制作状況
-                  </Text>
-                  <View style={[styles.pageBadgePill, { backgroundColor: `${colors.primary}18` }]}>
-                    <Text style={[styles.pageBadgePillText, { color: colors.primary }]}>
-                      {pages.length} ページ
+                {/* Top row: page count + style picker */}
+                <View style={styles.controlBarTop}>
+                  <View style={styles.controlBarLeft}>
+                    <Text style={[styles.controlBarTitle, { color: colors.foreground }]}>
+                      制作状況
                     </Text>
+                    <View style={[styles.pageBadgePill, { backgroundColor: `${colors.primary}18` }]}>
+                      <Text style={[styles.pageBadgePillText, { color: colors.primary }]}>
+                        {pages.length} ページ
+                      </Text>
+                    </View>
                   </View>
+                  <StylePicker
+                    selectedStyleId={selectedStyleId}
+                    onStyleChange={setSelectedStyleId}
+                    disabled={isProcessing}
+                  />
                 </View>
+                {/* Bottom row: action buttons */}
                 <View style={styles.controlButtons}>
                   <TouchableOpacity
                     onPress={batchRemakeWithAI}
@@ -693,15 +706,17 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   controlBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    flexDirection: "column",
     padding: 14,
     borderRadius: 20,
     borderWidth: 1,
-    flexWrap: "wrap",
     gap: 10,
     marginTop: 16,
+  },
+  controlBarTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   controlBarLeft: {
     flexDirection: "row",

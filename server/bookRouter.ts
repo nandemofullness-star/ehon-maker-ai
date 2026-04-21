@@ -74,6 +74,22 @@ async function generatePdfBuffer(
   });
 }
 
+// Style-specific prompt fragments (must match constants/drawing-styles.ts)
+const STYLE_PROMPTS: Record<string, string> = {
+  watercolor:
+    "soft watercolor illustration style with gentle washes of color, visible brush strokes, and a dreamy, translucent quality",
+  crayon:
+    "crayon drawing style with thick, textured strokes, warm and vibrant colors, and a hand-drawn childlike quality",
+  anime:
+    "anime illustration style with clean bold outlines, vibrant flat colors, expressive character design, and a Japanese animation aesthetic",
+  oilpaint:
+    "oil painting style with rich impasto texture, deep saturated colors, visible brushwork, and a classic fine-art quality",
+  papercut:
+    "paper cut art style with flat layered shapes, bold silhouettes, limited color palette, and a clean graphic quality",
+  pencil:
+    "pencil sketch illustration style with fine hatching lines, delicate shading, a hand-drawn quality, and subtle use of color",
+};
+
 export const bookRouter = router({
   // AI image remake: transform photo to storybook illustration
   remakeImage: publicProcedure
@@ -81,12 +97,18 @@ export const bookRouter = router({
       z.object({
         imageBase64: z.string(),
         mimeType: z.string().default("image/jpeg"),
+        drawingStyle: z.string().default("watercolor"),
       })
     )
     .mutation(async ({ input }) => {
+      const styleFragment =
+        STYLE_PROMPTS[input.drawingStyle] ?? STYLE_PROMPTS["watercolor"];
+
       const result = await generateImage({
         prompt:
-          "GENERATE IMAGE: Transform this photo into a cute, simple storybook illustration for a 3-year-old child. Style: thick clean outlines, bright pastel colors, warm and friendly, flat illustration. Main subject should be recognizable but in a gentle drawing style. 1:1 aspect ratio.",
+          `GENERATE IMAGE: Transform this photo into a cute, simple storybook illustration for a 3-year-old child. ` +
+          `Drawing style: ${styleFragment}. ` +
+          `The main subject should be clearly recognizable. Keep it child-friendly, warm, and engaging. 1:1 aspect ratio.`,
         originalImages: [
           {
             b64Json: input.imageBase64,
