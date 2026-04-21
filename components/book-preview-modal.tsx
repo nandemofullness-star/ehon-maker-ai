@@ -11,11 +11,13 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from "react-native";
+import PagerView from "react-native-pager-view";
 import { Image } from "expo-image";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type PageType = "cover" | "back-cover" | "inner";
+type ViewMode = "scroll" | "swipe";
 
 interface PreviewPage {
   id: string;
@@ -31,11 +33,88 @@ interface BookPreviewModalProps {
   onClose: () => void;
 }
 
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
-// Square card: full width with horizontal padding
+const { width: SCREEN_W } = Dimensions.get("window");
 const CARD_PADDING = 20;
 const CARD_SIZE = SCREEN_W - CARD_PADDING * 2;
+// In swipe mode the card fills more of the screen
+const SWIPE_CARD_SIZE = SCREEN_W - 32;
 
+// ─── Shared page card renderer ────────────────────────────────────────────────
+function PageCard({
+  item,
+  index,
+  size,
+}: {
+  item: PreviewPage;
+  index: number;
+  size: number;
+}) {
+  const isCover = item.pageType === "cover";
+  const isBackCover = item.pageType === "back-cover";
+
+  return (
+    <View style={[styles.pageCard, { width: size, height: size }]}>
+      <Image
+        source={{ uri: item.uri }}
+        style={{ width: size, height: size }}
+        contentFit="cover"
+        transition={200}
+      />
+
+      {/* COVER */}
+      {isCover && (
+        <>
+          <View style={styles.coverGradient} />
+          {item.text ? (
+            <View style={styles.coverTitleContainer}>
+              <Text style={styles.coverTitle} numberOfLines={4}>
+                {item.text}
+              </Text>
+            </View>
+          ) : null}
+          <View style={[styles.coverBadge, { backgroundColor: "#4F46E5" }]}>
+            <Text style={styles.coverBadgeText}>表紙</Text>
+          </View>
+        </>
+      )}
+
+      {/* BACK COVER */}
+      {isBackCover && (
+        <>
+          <View style={styles.backCoverGradient} />
+          {item.text ? (
+            <View style={styles.backCoverAuthorContainer}>
+              <Text style={styles.backCoverAuthor} numberOfLines={3}>
+                {item.text}
+              </Text>
+            </View>
+          ) : null}
+          <View style={[styles.coverBadge, { backgroundColor: "#7C3AED" }]}>
+            <Text style={styles.coverBadgeText}>裏表紙</Text>
+          </View>
+        </>
+      )}
+
+      {/* INNER */}
+      {!isCover && !isBackCover && item.text ? (
+        <View style={styles.innerTextContainer}>
+          <Text style={styles.innerText} numberOfLines={4}>
+            {item.text}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Page number badge (inner only) */}
+      {!isCover && !isBackCover && (
+        <View style={styles.pageNumberBadge}>
+          <Text style={styles.pageNumberText}>P.{index + 1}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── Main modal ───────────────────────────────────────────────────────────────
 export function BookPreviewModal({
   visible,
   pages,
@@ -44,87 +123,51 @@ export function BookPreviewModal({
 }: BookPreviewModalProps) {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
+  const pagerRef = useRef<PagerView>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [viewMode, setViewMode] = useState<ViewMode>("swipe");
 
+  // ── scroll mode: track current page from offset ──
   const handleScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const offsetY = e.nativeEvent.contentOffset.y;
-      const itemHeight = CARD_SIZE + 24; // card + gap
+      const itemHeight = CARD_SIZE + 24;
       const idx = Math.round(offsetY / itemHeight);
       setCurrentIndex(Math.max(0, Math.min(idx, pages.length - 1)));
     },
     [pages.length]
   );
 
-  const renderPage = useCallback(
-    ({ item, index }: { item: PreviewPage; index: number }) => {
-      const isCover = item.pageType === "cover";
-      const isBackCover = item.pageType === "back-cover";
+  // ── swipe mode: navigate with arrow buttons ──
+  const goToPrev = useCallback(() => {
+    if (currentIndex > 0) {
+      const next = currentIndex - 1;
+      pagerRef.current?.setPage(next);
+      setCurrentIndex(next);
+    }
+  }, [currentIndex]);
 
-      return (
-        <View style={styles.pageWrapper}>
-          <View style={styles.pageCard}>
-            {/* Full-bleed image */}
-            <Image
-              source={{ uri: item.uri }}
-              style={styles.pageImage}
-              contentFit="cover"
-              transition={200}
-            />
+  const goToNext = useCallback(() => {
+    if (currentIndex < pages.length - 1) {
+      const next = currentIndex + 1;
+      pagerRef.current?.setPage(next);
+      setCurrentIndex(next);
+    }
+  }, [currentIndex, pages.length]);
 
-            {/* COVER layout */}
-            {isCover && (
-              <>
-                <View style={styles.coverGradient} />
-                {item.text ? (
-                  <View style={styles.coverTitleContainer}>
-                    <Text style={styles.coverTitle} numberOfLines={4}>
-                      {item.text}
-                    </Text>
-                  </View>
-                ) : null}
-                <View style={[styles.coverBadge, { backgroundColor: "#4F46E5" }]}>
-                  <Text style={styles.coverBadgeText}>表紙</Text>
-                </View>
-              </>
-            )}
+  // ── switch view mode: reset index ──
+  const switchMode = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    setCurrentIndex(0);
+  }, []);
 
-            {/* BACK COVER layout */}
-            {isBackCover && (
-              <>
-                <View style={styles.backCoverGradient} />
-                {item.text ? (
-                  <View style={styles.backCoverAuthorContainer}>
-                    <Text style={styles.backCoverAuthor} numberOfLines={3}>
-                      {item.text}
-                    </Text>
-                  </View>
-                ) : null}
-                <View style={[styles.coverBadge, { backgroundColor: "#7C3AED" }]}>
-                  <Text style={styles.coverBadgeText}>裏表紙</Text>
-                </View>
-              </>
-            )}
-
-            {/* INNER PAGE layout */}
-            {!isCover && !isBackCover && item.text ? (
-              <View style={styles.innerTextContainer}>
-                <Text style={styles.innerText} numberOfLines={4}>
-                  {item.text}
-                </Text>
-              </View>
-            ) : null}
-
-            {/* Page number (inner only) */}
-            {!isCover && !isBackCover && (
-              <View style={styles.pageNumberBadge}>
-                <Text style={styles.pageNumberText}>P.{index + 1}</Text>
-              </View>
-            )}
-          </View>
-        </View>
-      );
-    },
+  // ── FlatList render item (scroll mode) ──
+  const renderScrollItem = useCallback(
+    ({ item, index }: { item: PreviewPage; index: number }) => (
+      <View style={styles.scrollPageWrapper}>
+        <PageCard item={item} index={index} size={CARD_SIZE} />
+      </View>
+    ),
     []
   );
 
@@ -140,7 +183,8 @@ export function BookPreviewModal({
     >
       <StatusBar barStyle="light-content" backgroundColor="#0a0a14" />
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        {/* Header */}
+
+        {/* ── Header ── */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <MaterialIcons name="menu-book" size={20} color="#a5b4fc" />
@@ -149,8 +193,42 @@ export function BookPreviewModal({
             </Text>
           </View>
           <View style={styles.headerRight}>
+            {/* Mode toggle */}
+            <View style={styles.modeToggle}>
+              <TouchableOpacity
+                onPress={() => switchMode("swipe")}
+                style={[
+                  styles.modeBtn,
+                  viewMode === "swipe" && styles.modeBtnActive,
+                ]}
+                activeOpacity={0.75}
+              >
+                <MaterialIcons
+                  name="import-contacts"
+                  size={15}
+                  color={viewMode === "swipe" ? "#fff" : "#94a3b8"}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => switchMode("scroll")}
+                style={[
+                  styles.modeBtn,
+                  viewMode === "scroll" && styles.modeBtnActive,
+                ]}
+                activeOpacity={0.75}
+              >
+                <MaterialIcons
+                  name="view-agenda"
+                  size={15}
+                  color={viewMode === "scroll" ? "#fff" : "#94a3b8"}
+                />
+              </TouchableOpacity>
+            </View>
+
             <Text style={styles.pageCounter}>
-              {pages.length > 0 ? `${currentIndex + 1} / ${pages.length}` : "0 / 0"}
+              {pages.length > 0
+                ? `${currentIndex + 1} / ${pages.length}`
+                : "0 / 0"}
             </Text>
             <TouchableOpacity
               onPress={onClose}
@@ -162,18 +240,64 @@ export function BookPreviewModal({
           </View>
         </View>
 
-        {/* Page list */}
+        {/* ── Empty state ── */}
         {pages.length === 0 ? (
           <View style={styles.emptyContainer}>
             <MaterialIcons name="photo-library" size={60} color="#4a5568" />
             <Text style={styles.emptyText}>ページがありません</Text>
           </View>
+        ) : viewMode === "swipe" ? (
+          /* ── SWIPE MODE ── */
+          <View style={styles.swipeContainer}>
+            <PagerView
+              ref={pagerRef}
+              style={styles.pagerView}
+              initialPage={0}
+              onPageSelected={(e) =>
+                setCurrentIndex(e.nativeEvent.position)
+              }
+              pageMargin={16}
+            >
+              {pages.map((page, index) => (
+                <View key={page.id} style={styles.swipePageOuter}>
+                  <PageCard item={page} index={index} size={SWIPE_CARD_SIZE} />
+                </View>
+              ))}
+            </PagerView>
+
+            {/* Left / Right arrow buttons */}
+            <TouchableOpacity
+              onPress={goToPrev}
+              disabled={currentIndex === 0}
+              style={[
+                styles.arrowButton,
+                styles.arrowLeft,
+                currentIndex === 0 && styles.arrowDisabled,
+              ]}
+              activeOpacity={0.75}
+            >
+              <MaterialIcons name="chevron-left" size={28} color="#e2e8f0" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={goToNext}
+              disabled={currentIndex === pages.length - 1}
+              style={[
+                styles.arrowButton,
+                styles.arrowRight,
+                currentIndex === pages.length - 1 && styles.arrowDisabled,
+              ]}
+              activeOpacity={0.75}
+            >
+              <MaterialIcons name="chevron-right" size={28} color="#e2e8f0" />
+            </TouchableOpacity>
+          </View>
         ) : (
+          /* ── SCROLL MODE ── */
           <FlatList
             ref={flatListRef}
             data={pages}
             keyExtractor={keyExtractor}
-            renderItem={renderPage}
+            renderItem={renderScrollItem}
             showsVerticalScrollIndicator={false}
             onScroll={handleScroll}
             scrollEventThrottle={16}
@@ -186,9 +310,14 @@ export function BookPreviewModal({
           />
         )}
 
-        {/* Bottom progress dots */}
+        {/* ── Progress dots (both modes, ≤24 pages) ── */}
         {pages.length > 1 && pages.length <= 24 && (
-          <View style={[styles.dotsContainer, { paddingBottom: insets.bottom + 8 }]}>
+          <View
+            style={[
+              styles.dotsContainer,
+              { paddingBottom: insets.bottom + 8 },
+            ]}
+          >
             {pages.map((_, i) => (
               <View
                 key={i}
@@ -205,6 +334,7 @@ export function BookPreviewModal({
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -234,7 +364,20 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 10,
+  },
+  modeToggle: {
+    flexDirection: "row",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  modeBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  modeBtnActive: {
+    backgroundColor: "#4F46E5",
   },
   pageCounter: {
     color: "#94a3b8",
@@ -259,17 +402,50 @@ const styles = StyleSheet.create({
     color: "#4a5568",
     fontSize: 16,
   },
+  // ── Swipe mode ──
+  swipeContainer: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  pagerView: {
+    flex: 1,
+  },
+  swipePageOuter: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  arrowButton: {
+    position: "absolute",
+    top: "50%",
+    marginTop: -24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  arrowLeft: {
+    left: 8,
+  },
+  arrowRight: {
+    right: 8,
+  },
+  arrowDisabled: {
+    opacity: 0.25,
+  },
+  // ── Scroll mode ──
   listContent: {
     paddingTop: 20,
     paddingHorizontal: CARD_PADDING,
     gap: 24,
   },
-  pageWrapper: {
+  scrollPageWrapper: {
     alignItems: "center",
   },
+  // ── Page card ──
   pageCard: {
-    width: CARD_SIZE,
-    height: CARD_SIZE,
     borderRadius: 20,
     overflow: "hidden",
     backgroundColor: "#1a1a2e",
@@ -278,10 +454,6 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 8 },
     elevation: 12,
-  },
-  pageImage: {
-    width: CARD_SIZE,
-    height: CARD_SIZE,
   },
   // Cover
   coverGradient: {

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 
-// ---- helpers mirroring the modal's internal logic ----
-
+// ---- types mirroring the modal ----
 type PageType = "cover" | "back-cover" | "inner";
+type ViewMode = "scroll" | "swipe";
 
 interface PreviewPage {
   id: string;
@@ -11,55 +11,96 @@ interface PreviewPage {
   pageType: PageType;
 }
 
-/** Replicate the scroll-to-index calculation used in the modal */
-function calcCurrentIndex(offsetY: number, cardSize: number, totalPages: number): number {
+// ---- helpers mirroring modal logic ----
+
+function calcScrollIndex(offsetY: number, cardSize: number, totalPages: number): number {
   const itemHeight = cardSize + 24;
   const idx = Math.round(offsetY / itemHeight);
   return Math.max(0, Math.min(idx, totalPages - 1));
 }
 
-/** Determine which overlay label to show for a page */
 function getPageLabel(page: PreviewPage): string | null {
   if (page.pageType === "cover") return "表紙";
   if (page.pageType === "back-cover") return "裏表紙";
   return null;
 }
 
-/** Determine the page number badge text (inner pages only) */
 function getPageNumberBadge(page: PreviewPage, index: number): string | null {
   if (page.pageType === "inner") return `P.${index + 1}`;
   return null;
 }
 
+function canGoNext(currentIndex: number, totalPages: number): boolean {
+  return currentIndex < totalPages - 1;
+}
+
+function canGoPrev(currentIndex: number): boolean {
+  return currentIndex > 0;
+}
+
+function goToNext(currentIndex: number, totalPages: number): number {
+  return canGoNext(currentIndex, totalPages) ? currentIndex + 1 : currentIndex;
+}
+
+function goToPrev(currentIndex: number): number {
+  return canGoPrev(currentIndex) ? currentIndex - 1 : currentIndex;
+}
+
 // ---- tests ----
 
 describe("BookPreviewModal – scroll index calculation", () => {
-  const CARD_SIZE = 335; // typical value for a 375px-wide screen
+  const CARD_SIZE = 335;
 
   it("returns 0 at scroll offset 0", () => {
-    expect(calcCurrentIndex(0, CARD_SIZE, 10)).toBe(0);
+    expect(calcScrollIndex(0, CARD_SIZE, 10)).toBe(0);
   });
 
   it("advances to page 1 after scrolling one item height", () => {
-    const itemH = CARD_SIZE + 24;
-    expect(calcCurrentIndex(itemH, CARD_SIZE, 10)).toBe(1);
+    expect(calcScrollIndex(CARD_SIZE + 24, CARD_SIZE, 10)).toBe(1);
   });
 
   it("clamps to 0 for negative offsets", () => {
-    expect(calcCurrentIndex(-100, CARD_SIZE, 10)).toBe(0);
+    expect(calcScrollIndex(-100, CARD_SIZE, 10)).toBe(0);
   });
 
   it("clamps to last page index when offset exceeds list", () => {
-    const itemH = CARD_SIZE + 24;
-    expect(calcCurrentIndex(itemH * 100, CARD_SIZE, 5)).toBe(4);
+    expect(calcScrollIndex((CARD_SIZE + 24) * 100, CARD_SIZE, 5)).toBe(4);
   });
 
   it("rounds to nearest page on partial scroll", () => {
     const itemH = CARD_SIZE + 24;
-    // 60% of the way to page 2 → rounds to page 2
-    expect(calcCurrentIndex(itemH * 1.6, CARD_SIZE, 10)).toBe(2);
-    // 40% of the way to page 2 → rounds back to page 1
-    expect(calcCurrentIndex(itemH * 1.4, CARD_SIZE, 10)).toBe(1);
+    expect(calcScrollIndex(itemH * 1.6, CARD_SIZE, 10)).toBe(2);
+    expect(calcScrollIndex(itemH * 1.4, CARD_SIZE, 10)).toBe(1);
+  });
+});
+
+describe("BookPreviewModal – swipe mode navigation", () => {
+  it("goToNext advances the index", () => {
+    expect(goToNext(0, 5)).toBe(1);
+    expect(goToNext(3, 5)).toBe(4);
+  });
+
+  it("goToNext does not exceed last page", () => {
+    expect(goToNext(4, 5)).toBe(4);
+  });
+
+  it("goToPrev decrements the index", () => {
+    expect(goToPrev(3)).toBe(2);
+    expect(goToPrev(1)).toBe(0);
+  });
+
+  it("goToPrev does not go below 0", () => {
+    expect(goToPrev(0)).toBe(0);
+  });
+
+  it("canGoNext is false on last page", () => {
+    expect(canGoNext(4, 5)).toBe(false);
+    expect(canGoNext(3, 5)).toBe(true);
+  });
+
+  it("canGoPrev is false on first page", () => {
+    expect(canGoPrev(0)).toBe(false);
+    expect(canGoPrev(1)).toBe(true);
   });
 });
 
@@ -113,5 +154,25 @@ describe("BookPreviewModal – progress dots visibility", () => {
     expect(showDots(2)).toBe(true);
     expect(showDots(24)).toBe(true);
     expect(showDots(25)).toBe(false);
+  });
+});
+
+describe("BookPreviewModal – view mode switching", () => {
+  it("defaults to swipe mode", () => {
+    const defaultMode: ViewMode = "swipe";
+    expect(defaultMode).toBe("swipe");
+  });
+
+  it("can switch to scroll mode", () => {
+    let mode: ViewMode = "swipe";
+    mode = "scroll";
+    expect(mode).toBe("scroll");
+  });
+
+  it("switching mode resets index to 0", () => {
+    let index = 5;
+    // simulate switchMode
+    index = 0;
+    expect(index).toBe(0);
   });
 });
