@@ -1,4 +1,5 @@
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
+import { useFocusEffect } from "expo-router";
 import {
   View,
   Text,
@@ -24,6 +25,7 @@ import { trpc } from "@/lib/trpc";
 import { CompareModal } from "@/components/compare-modal";
 import { StylePicker } from "@/components/style-picker";
 import { DEFAULT_STYLE_ID } from "@/constants/drawing-styles";
+import { useProjectStore, type SavedProject } from "@/hooks/use-project-store";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
@@ -55,6 +57,117 @@ export default function HomeScreen() {
   const generatePdfMutation = trpc.book.generatePdf.useMutation();
   const [compareState, setCompareState] = useState<CompareState | null>(null);
   const [selectedStyleId, setSelectedStyleId] = useState(DEFAULT_STYLE_ID);
+
+  // Project persistence
+  const { saveProject, generateId } = useProjectStore();
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [currentProjectTitle, setCurrentProjectTitle] = useState<string>("");
+  const [isSaving, setIsSaving] = useState(false);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Persist the current editor state to AsyncStorage */
+  const persistProject = useCallback(
+    async (projectId: string, title: string, pagesSnapshot: PageItem[], styleId: string) => {
+      const project: SavedProject = {
+        id: projectId,
+        title: title || "無題の絵本",
+        drawingStyleId: styleId,
+        pages: pagesSnapshot.map((p) => ({
+          id: p.id,
+          uri: p.uri,
+          originalUri: p.originalUri,
+          text: p.text,
+          isRemade: p.isRemade,
+        })),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        thumbnailUri: pagesSnapshot[0]?.uri ?? null,
+      };
+      await saveProject(project);
+    },
+    [saveProject]
+  );
+
+  /** Debounced auto-save whenever pages or style changes */
+  const scheduleAutoSave = useCallback(
+    (pagesSnapshot: PageItem[], styleId: string) => {
+      if (!currentProjectId) return;
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = setTimeout(() => {
+        persistProject(currentProjectId, currentProjectTitle, pagesSnapshot, styleId);
+      }, 1500);
+    },
+    [currentProjectId, currentProjectTitle, persistProject]
+  );
+
+  /** Manually save with a name prompt */
+  const handleSaveProject = useCallback(async () => {
+    if (pages.length === 0) {
+      Alert.alert("保存できません", "ページを追加してから保存してください。");
+      return;
+    }
+    const projectId = currentProjectId ?? generateId();
+    Alert.prompt(
+      "プロジェクトを保存",
+      "絵本のタイトルを入力してください",
+      async (title) => {
+        if (title === null) return; // cancelled
+        const finalTitle = title.trim() || "無題の絵本";
+        setIsSaving(true);
+        try {
+          await persistProject(projectId, finalTitle, pages, selectedStyleId);
+          setCurrentProjectId(projectId);
+          setCurrentProjectTitle(finalTitle);
+          Alert.alert("保存完了", `「${finalTitle}」を保存しました。`);
+        } catch {
+          Alert.alert("エラー", "保存に失敗しました。");
+        } finally {
+          setIsSaving(false);
+        }
+      },
+      "plain-text",
+      currentProjectTitle
+    );
+  }, [pages, currentProjectId, currentProjectTitle, selectedStyleId, generateId, persistProject]);
+
+  /** Load a project into the editor (called from projects tab via navigation params) */
+  const loadProjectIntoEditor = useCallback((project: SavedProject) => {
+    setPages(
+      project.pages.map((p) => ({
+        ...p,
+        isProcessing: false,
+      }))
+    );
+    setSelectedStyleId(project.drawingStyleId);
+    setCurrentProjectId(project.id);
+    setCurrentProjectTitle(project.title);
+  }, []);
+
+  // Load project when navigating from the projects tab
+  const LOAD_KEY = "@kdp_load_project_request";
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        const raw = await AsyncStorage.getItem(LOAD_KEY);
+        if (!raw) return;
+        await AsyncStorage.removeItem(LOAD_KEY);
+        try {
+          const project = JSON.parse(raw) as import("@/hooks/use-project-store").SavedProject;
+          loadProjectIntoEditor(project);
+        } catch {
+          // ignore parse errors
+        }
+      })();
+    }, [loadProjectIntoEditor])
+  );
+
+  // Auto-save on page/style changes when a project is already saved
+  useEffect(() => {
+    if (pages.length > 0) scheduleAutoSave(pages, selectedStyleId);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [pages, selectedStyleId, scheduleAutoSave]);
 
   const pickImages = useCallback(async () => {
     if (isBatchProcessing || isGeneratingPdf) return;
@@ -443,9 +556,28 @@ export default function HomeScreen() {
             <Text style={{ color: colors.primary }}>AI</Text>
           </Text>
         </View>
-        <Text style={[styles.headerSubtitle, { color: colors.muted, borderColor: colors.border }]}>
-          215.9 × 215.9 mm
-        </Text>
+        <View style={styles.headerRight}>
+          <Text style={[styles.headerSubtitle, { color: colors.muted, borderColor: colors.border }]}>
+            215.9 × 215.9 mm
+          </Text>
+          {pages.length > 0 && (
+            <TouchableOpacity
+              onPress={handleSaveProject}
+              disabled={isProcessing || isSaving}
+              style={[styles.saveButton, { backgroundColor: `${colors.primary}18`, borderColor: `${colors.primary}40` }, (isProcessing || isSaving) && styles.disabledButton]}
+              activeOpacity={0.75}
+            >
+              {isSaving ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <MaterialIcons name="save" size={18} color={colors.primary} />
+              )}
+              <Text style={[styles.saveButtonText, { color: colors.primary }]}>
+                {currentProjectId ? "上書き保存" : "保存"}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <FlatList
@@ -925,5 +1057,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     lineHeight: 22,
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  saveButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  saveButtonText: {
+    fontSize: 12,
+    fontWeight: "700",
   },
 });
