@@ -10,23 +10,11 @@ import {
   StatusBar,
   NativeSyntheticEvent,
   NativeScrollEvent,
-  Platform,
-  ScrollView,
 } from "react-native";
 import { Image } from "expo-image";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-// PagerView is native-only. On web we render a horizontal ScrollView fallback.
-type PagerViewHandle = { setPage: (page: number) => void };
-
-// Lazy-load so Metro never bundles the native module on web
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const getNativePagerView = (): React.ComponentType<any> | null => {
-  if (Platform.OS === "web") return null;
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  return require("react-native-pager-view").default;
-};
+import { PagerViewWrapper } from "./pager-view-wrapper";
 
 type PageType = "cover" | "back-cover" | "inner";
 type ViewMode = "scroll" | "swipe";
@@ -48,7 +36,6 @@ interface BookPreviewModalProps {
 const { width: SCREEN_W } = Dimensions.get("window");
 const CARD_PADDING = 20;
 const CARD_SIZE = SCREEN_W - CARD_PADDING * 2;
-// In swipe mode the card fills more of the screen
 const SWIPE_CARD_SIZE = SCREEN_W - 32;
 
 // ─── Shared page card renderer ────────────────────────────────────────────────
@@ -135,9 +122,7 @@ export function BookPreviewModal({
 }: BookPreviewModalProps) {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pagerRef = useRef<any>(null);
-  const NativePagerView = Platform.OS !== "web" ? getNativePagerView() : null;
+  const pagerRef = useRef<{ setPage: (page: number) => void }>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>("swipe");
 
@@ -263,43 +248,19 @@ export function BookPreviewModal({
         ) : viewMode === "swipe" ? (
           /* ── SWIPE MODE ── */
           <View style={styles.swipeContainer}>
-            {NativePagerView ? (
-              <NativePagerView
-                ref={pagerRef}
-                style={styles.pagerView}
-                initialPage={0}
-                onPageSelected={(e: { nativeEvent: { position: number } }) =>
-                  setCurrentIndex(e.nativeEvent.position)
-                }
-                pageMargin={16}
-              >
-                {pages.map((page, index) => (
-                  <View key={page.id} style={styles.swipePageOuter}>
-                    <PageCard item={page} index={index} size={SWIPE_CARD_SIZE} />
-                  </View>
-                ))}
-              </NativePagerView>
-            ) : (
-              /* Web fallback: horizontal ScrollView with snap */
-              <ScrollView
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                style={styles.pagerView}
-                onScroll={(e) => {
-                  const offsetX = e.nativeEvent.contentOffset.x;
-                  const idx = Math.round(offsetX / SCREEN_W);
-                  setCurrentIndex(Math.max(0, Math.min(idx, pages.length - 1)));
-                }}
-                scrollEventThrottle={16}
-              >
-                {pages.map((page, index) => (
-                  <View key={page.id} style={[styles.swipePageOuter, { width: SCREEN_W }]}>
-                    <PageCard item={page} index={index} size={SWIPE_CARD_SIZE} />
-                  </View>
-                ))}
-              </ScrollView>
-            )}
+            <PagerViewWrapper
+              pagerRef={pagerRef}
+              style={styles.pagerView}
+              initialPage={0}
+              onPageSelected={setCurrentIndex}
+              pageMargin={16}
+            >
+              {pages.map((page, index) => (
+                <View key={page.id} style={[styles.swipePageOuter, { width: SCREEN_W }]}>
+                  <PageCard item={page} index={index} size={SWIPE_CARD_SIZE} />
+                </View>
+              ))}
+            </PagerViewWrapper>
 
             {/* Left / Right arrow buttons */}
             <TouchableOpacity
