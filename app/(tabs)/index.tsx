@@ -1,48 +1,763 @@
-import { ScrollView, Text, View, TouchableOpacity } from "react-native";
-
+import React, { useState, useCallback, useRef } from "react";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  FlatList,
+  TextInput,
+  Alert,
+  ActivityIndicator,
+  StyleSheet,
+  Dimensions,
+  ScrollView,
+  Platform,
+} from "react-native";
+import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ScreenContainer } from "@/components/screen-container";
+import { useColors } from "@/hooks/use-colors";
+import { MaterialIcons } from "@expo/vector-icons";
+import { trpc } from "@/lib/trpc";
 
-/**
- * Home Screen - NativeWind Example
- *
- * This template uses NativeWind (Tailwind CSS for React Native).
- * You can use familiar Tailwind classes directly in className props.
- *
- * Key patterns:
- * - Use `className` instead of `style` for most styling
- * - Theme colors: use tokens directly (bg-background, text-foreground, bg-primary, etc.); no dark: prefix needed
- * - Responsive: standard Tailwind breakpoints work on web
- * - Custom colors defined in tailwind.config.js
- */
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
+
+interface PageItem {
+  id: string;
+  uri: string;
+  text: string;
+  isProcessing: boolean;
+  isRemade: boolean;
+}
+
 export default function HomeScreen() {
-  return (
-    <ScreenContainer className="p-6">
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
-        <View className="flex-1 gap-8">
-          {/* Hero Section */}
-          <View className="items-center gap-2">
-            <Text className="text-4xl font-bold text-foreground">Welcome</Text>
-            <Text className="text-base text-muted text-center">
-              Edit app/(tabs)/index.tsx to get started
+  const colors = useColors();
+  const [pages, setPages] = useState<PageItem[]>([]);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
+
+  const remakeImageMutation = trpc.book.remakeImage.useMutation();
+  const generatePdfMutation = trpc.book.generatePdf.useMutation();
+
+  const pickImages = useCallback(async () => {
+    if (isBatchProcessing || isGeneratingPdf) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: "images",
+      allowsMultipleSelection: true,
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets.length > 0) {
+      const newPages: PageItem[] = result.assets.map((asset) => ({
+        id: `${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        uri: asset.uri,
+        text: "",
+        isProcessing: false,
+        isRemade: false,
+      }));
+      setPages((prev) => [...prev, ...newPages]);
+    }
+  }, [isBatchProcessing, isGeneratingPdf]);
+
+  const removePage = useCallback(
+    (id: string) => {
+      if (isBatchProcessing) return;
+      setPages((prev) => prev.filter((p) => p.id !== id));
+    },
+    [isBatchProcessing]
+  );
+
+  const movePage = useCallback(
+    (index: number, direction: "up" | "down") => {
+      if (isBatchProcessing) return;
+      if (direction === "up" && index === 0) return;
+      if (direction === "down" && index === pages.length - 1) return;
+      setPages((prev) => {
+        const newPages = [...prev];
+        const targetIndex = direction === "up" ? index - 1 : index + 1;
+        [newPages[index], newPages[targetIndex]] = [newPages[targetIndex], newPages[index]];
+        return newPages;
+      });
+    },
+    [isBatchProcessing, pages.length]
+  );
+
+  const handleTextChange = useCallback((id: string, text: string) => {
+    setPages((prev) => prev.map((p) => (p.id === id ? { ...p, text } : p)));
+  }, []);
+
+  const remakeSinglePage = useCallback(
+    async (page: PageItem): Promise<string> => {
+      // Read image as base64
+      const base64 = await FileSystem.readAsStringAsync(page.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const result = await remakeImageMutation.mutateAsync({
+        imageBase64: base64,
+        mimeType: "image/jpeg",
+      });
+
+      if (!result.imageUrl) throw new Error("画像URLが返されませんでした");
+
+      // Download the generated image to local cache
+      const localUri = FileSystem.cacheDirectory + `remade_${page.id}.jpg`;
+      await FileSystem.downloadAsync(result.imageUrl, localUri);
+      return localUri;
+    },
+    [remakeImageMutation]
+  );
+
+  const batchRemakeWithAI = useCallback(async () => {
+    if (pages.length === 0) return;
+    setIsBatchProcessing(true);
+    setProgress({ current: 0, total: pages.length });
+
+    const currentPages = [...pages];
+    let hasError = false;
+
+    for (let i = 0; i < currentPages.length; i++) {
+      const page = currentPages[i];
+      setProgress({ current: i + 1, total: currentPages.length });
+      setPages((prev) =>
+        prev.map((p) => (p.id === page.id ? { ...p, isProcessing: true } : p))
+      );
+
+      try {
+        const newUri = await remakeSinglePage(page);
+        setPages((prev) =>
+          prev.map((p) =>
+            p.id === page.id
+              ? { ...p, uri: newUri, isProcessing: false, isRemade: true }
+              : p
+          )
+        );
+      } catch (err: any) {
+        console.error(`ページ ${i + 1} のリメイク失敗:`, err);
+        Alert.alert("エラー", `ページ ${i + 1} の変換に失敗しました: ${err.message}`);
+        setPages((prev) =>
+          prev.map((p) => (p.id === page.id ? { ...p, isProcessing: false } : p))
+        );
+        hasError = true;
+        break;
+      }
+
+      // Rate limit avoidance
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
+    setIsBatchProcessing(false);
+    setProgress({ current: 0, total: 0 });
+
+    if (!hasError) {
+      Alert.alert("完了", "すべてのページのAIリメイクが完了しました！");
+    }
+  }, [pages, remakeSinglePage]);
+
+  const generatePDF = useCallback(async () => {
+    if (pages.length === 0) return;
+    setIsGeneratingPdf(true);
+    setProgress({ current: 0, total: pages.length });
+
+    try {
+      // Encode all images to base64
+      const imageDataList: { base64: string; text: string }[] = [];
+      for (let i = 0; i < pages.length; i++) {
+        setProgress({ current: i + 1, total: pages.length });
+        const base64 = await FileSystem.readAsStringAsync(pages[i].uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        imageDataList.push({ base64, text: pages[i].text });
+      }
+
+      // Generate PDF via server
+      const result = await generatePdfMutation.mutateAsync({ pages: imageDataList });
+
+      if (!result.pdfUrl) throw new Error("PDF URLが返されませんでした");
+
+      // Download PDF
+      const pdfPath = FileSystem.cacheDirectory + `kdp_picture_book_${Date.now()}.pdf`;
+      await FileSystem.downloadAsync(result.pdfUrl, pdfPath);
+
+      // Share PDF
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        await Sharing.shareAsync(pdfPath, {
+          mimeType: "application/pdf",
+          dialogTitle: "KDP絵本PDFを保存・共有",
+        });
+      } else {
+        Alert.alert("完了", `PDFを保存しました: ${pdfPath}`);
+      }
+    } catch (err: any) {
+      console.error("PDF生成エラー:", err);
+      Alert.alert("エラー", `PDFの生成に失敗しました: ${err.message}`);
+    } finally {
+      setIsGeneratingPdf(false);
+      setProgress({ current: 0, total: 0 });
+    }
+  }, [pages]);
+
+  const renderPageCard = useCallback(
+    ({ item, index }: { item: PageItem; index: number }) => (
+      <View
+        style={[
+          styles.card,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}
+      >
+        {/* Image Preview */}
+        <View style={styles.imageContainer}>
+          <Image
+            source={{ uri: item.uri }}
+            style={[styles.image, item.isProcessing && styles.imageProcessing]}
+            contentFit="cover"
+          />
+          {/* Page number badge */}
+          <View style={[styles.pageBadge, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.pageBadgeText, { color: colors.foreground }]}>
+              P.{index + 1}
             </Text>
           </View>
+          {/* Remade badge */}
+          {item.isRemade && !item.isProcessing && (
+            <View style={[styles.remadeBadge, { backgroundColor: colors.success }]}>
+              <MaterialIcons name="check" size={14} color="#fff" />
+            </View>
+          )}
+          {/* Processing overlay */}
+          {item.isProcessing && (
+            <View style={styles.processingOverlay}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={[styles.processingText, { color: colors.primary }]}>
+                AI変換中...
+              </Text>
+            </View>
+          )}
+        </View>
 
-          {/* Example Card */}
-          <View className="w-full max-w-sm self-center bg-surface rounded-2xl p-6 shadow-sm border border-border">
-            <Text className="text-lg font-semibold text-foreground mb-2">NativeWind Ready</Text>
-            <Text className="text-sm text-muted leading-relaxed">
-              Use Tailwind CSS classes directly in your React Native components.
-            </Text>
-          </View>
+        {/* Text input */}
+        <View style={styles.cardBody}>
+          <TextInput
+            value={item.text}
+            onChangeText={(t) => handleTextChange(item.id, t)}
+            placeholder="テキストを入力..."
+            placeholderTextColor={colors.muted}
+            style={[
+              styles.textInput,
+              {
+                color: colors.foreground,
+                backgroundColor: colors.background,
+                borderColor: colors.border,
+              },
+            ]}
+            multiline
+            editable={!isBatchProcessing && !isGeneratingPdf}
+          />
 
-          {/* Example Button */}
-          <View className="items-center">
-            <TouchableOpacity className="bg-primary px-6 py-3 rounded-full active:opacity-80">
-              <Text className="text-background font-semibold">Get Started</Text>
+          {/* Action buttons */}
+          <View style={styles.cardActions}>
+            <View style={styles.moveButtons}>
+              <TouchableOpacity
+                onPress={() => movePage(index, "up")}
+                disabled={index === 0 || isBatchProcessing}
+                style={[
+                  styles.iconButton,
+                  { backgroundColor: colors.background },
+                  (index === 0 || isBatchProcessing) && styles.disabledButton,
+                ]}
+              >
+                <MaterialIcons
+                  name="arrow-upward"
+                  size={18}
+                  color={index === 0 || isBatchProcessing ? colors.muted : colors.primary}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => movePage(index, "down")}
+                disabled={index === pages.length - 1 || isBatchProcessing}
+                style={[
+                  styles.iconButton,
+                  { backgroundColor: colors.background },
+                  (index === pages.length - 1 || isBatchProcessing) && styles.disabledButton,
+                ]}
+              >
+                <MaterialIcons
+                  name="arrow-downward"
+                  size={18}
+                  color={
+                    index === pages.length - 1 || isBatchProcessing
+                      ? colors.muted
+                      : colors.primary
+                  }
+                />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              onPress={() => removePage(item.id)}
+              disabled={isBatchProcessing}
+              style={[
+                styles.iconButton,
+                { backgroundColor: colors.background },
+                isBatchProcessing && styles.disabledButton,
+              ]}
+            >
+              <MaterialIcons
+                name="delete"
+                size={18}
+                color={isBatchProcessing ? colors.muted : colors.error}
+              />
             </TouchableOpacity>
           </View>
         </View>
-      </ScrollView>
+      </View>
+    ),
+    [colors, pages.length, isBatchProcessing, isGeneratingPdf, movePage, removePage, handleTextChange]
+  );
+
+  const isProcessing = isBatchProcessing || isGeneratingPdf;
+
+  return (
+    <ScreenContainer containerClassName="bg-background">
+      {/* Header */}
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+        <View style={styles.headerLeft}>
+          <View style={[styles.headerIcon, { backgroundColor: colors.primary }]}>
+            <MaterialIcons name="menu-book" size={22} color="#fff" />
+          </View>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>
+            KDP絵本メーカー{" "}
+            <Text style={{ color: colors.primary }}>AI</Text>
+          </Text>
+        </View>
+        <Text style={[styles.headerSubtitle, { color: colors.muted, borderColor: colors.border }]}>
+          215.9 × 215.9 mm
+        </Text>
+      </View>
+
+      <FlatList
+        data={pages}
+        keyExtractor={(item) => item.id}
+        numColumns={2}
+        columnWrapperStyle={styles.columnWrapper}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          <>
+            {/* Upload Zone */}
+            <TouchableOpacity
+              onPress={pickImages}
+              disabled={isProcessing}
+              style={[
+                styles.uploadZone,
+                { borderColor: colors.primary, backgroundColor: colors.surface },
+                isProcessing && styles.disabledButton,
+              ]}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.uploadIconWrapper, { backgroundColor: `${colors.primary}18` }]}>
+                <MaterialIcons name="upload" size={36} color={colors.primary} />
+              </View>
+              <Text style={[styles.uploadTitle, { color: colors.foreground }]}>
+                写真をアップロード
+              </Text>
+              <Text style={[styles.uploadSubtitle, { color: colors.muted }]}>
+                複数選択可能。AIで絵本風イラストに変換できます。
+              </Text>
+              <View style={[styles.uploadButton, { backgroundColor: colors.primary }]}>
+                <Text style={styles.uploadButtonText}>ファイルを選択</Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Control bar */}
+            {pages.length > 0 && (
+              <View
+                style={[
+                  styles.controlBar,
+                  { backgroundColor: colors.surface, borderColor: colors.border },
+                ]}
+              >
+                <View style={styles.controlBarLeft}>
+                  <Text style={[styles.controlBarTitle, { color: colors.foreground }]}>
+                    制作状況
+                  </Text>
+                  <View style={[styles.pageBadgePill, { backgroundColor: `${colors.primary}18` }]}>
+                    <Text style={[styles.pageBadgePillText, { color: colors.primary }]}>
+                      {pages.length} ページ
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.controlButtons}>
+                  <TouchableOpacity
+                    onPress={batchRemakeWithAI}
+                    disabled={isProcessing}
+                    style={[
+                      styles.aiButton,
+                      { backgroundColor: colors.primary },
+                      isProcessing && styles.disabledButton,
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    {isBatchProcessing ? (
+                      <>
+                        <ActivityIndicator size="small" color="#fff" />
+                        <Text style={styles.aiButtonText}>
+                          {progress.current}/{progress.total}
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <MaterialIcons name="auto-awesome" size={16} color="#fff" />
+                        <Text style={styles.aiButtonText}>AI一括変換</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={generatePDF}
+                    disabled={isProcessing}
+                    style={[
+                      styles.pdfButton,
+                      { backgroundColor: colors.foreground },
+                      isProcessing && styles.disabledButton,
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    {isGeneratingPdf ? (
+                      <>
+                        <ActivityIndicator size="small" color={colors.background} />
+                        <Text style={[styles.pdfButtonText, { color: colors.background }]}>
+                          PDF作成中
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <MaterialIcons name="description" size={16} color={colors.background} />
+                        <Text style={[styles.pdfButtonText, { color: colors.background }]}>
+                          PDF出力
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* Warning banner */}
+            {pages.length > 0 && pages.length < 24 && (
+              <View style={[styles.warningBanner, { backgroundColor: "#FEF3C7", borderColor: "#F59E0B" }]}>
+                <MaterialIcons name="warning" size={20} color="#D97706" />
+                <View style={styles.warningText}>
+                  <Text style={styles.warningTitle}>ページ数アラート</Text>
+                  <Text style={styles.warningBody}>
+                    KDPペーパーバックには最低24ページが必要です。現在{pages.length}ページです。
+                  </Text>
+                </View>
+              </View>
+            )}
+          </>
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <View style={[styles.emptyIconWrapper, { backgroundColor: `${colors.primary}14` }]}>
+              <MaterialIcons name="menu-book" size={56} color={`${colors.primary}40`} />
+            </View>
+            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+              絵本制作を始めましょう
+            </Text>
+            <Text style={[styles.emptySubtitle, { color: colors.muted }]}>
+              写真をアップロードすると、AIが自動で{"\n"}世界観の統一された絵本へと導きます。
+            </Text>
+          </View>
+        }
+        renderItem={renderPageCard}
+      />
     </ScreenContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  headerIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+  },
+  headerSubtitle: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+    textTransform: "uppercase",
+  },
+  listContent: {
+    padding: 16,
+    paddingBottom: 100,
+    gap: 16,
+  },
+  columnWrapper: {
+    gap: 16,
+  },
+  uploadZone: {
+    borderWidth: 2,
+    borderStyle: "dashed",
+    borderRadius: 24,
+    alignItems: "center",
+    paddingVertical: 32,
+    paddingHorizontal: 24,
+    marginBottom: 0,
+  },
+  uploadIconWrapper: {
+    width: 72,
+    height: 72,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  uploadTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    marginBottom: 6,
+  },
+  uploadSubtitle: {
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  uploadButton: {
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 20,
+  },
+  uploadButtonText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+  controlBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 16,
+  },
+  controlBarLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  controlBarTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  pageBadgePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 20,
+  },
+  pageBadgePillText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  controlButtons: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  aiButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  aiButtonText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  pdfButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  pdfButtonText: {
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  warningBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 12,
+  },
+  warningText: {
+    flex: 1,
+  },
+  warningTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#92400E",
+    marginBottom: 2,
+  },
+  warningBody: {
+    fontSize: 12,
+    color: "#78350F",
+    lineHeight: 18,
+  },
+  card: {
+    width: CARD_WIDTH,
+    borderRadius: 20,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  imageContainer: {
+    width: CARD_WIDTH,
+    height: CARD_WIDTH,
+    position: "relative",
+  },
+  image: {
+    width: "100%",
+    height: "100%",
+  },
+  imageProcessing: {
+    opacity: 0.3,
+  },
+  pageBadge: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  pageBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  remadeBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  processingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(79, 70, 229, 0.08)",
+  },
+  processingText: {
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 8,
+    letterSpacing: 0.5,
+  },
+  cardBody: {
+    padding: 10,
+    gap: 8,
+  },
+  textInput: {
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
+    lineHeight: 18,
+    minHeight: 60,
+    textAlignVertical: "top",
+  },
+  cardActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  moveButtons: {
+    flexDirection: "row",
+    gap: 4,
+  },
+  iconButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  disabledButton: {
+    opacity: 0.4,
+  },
+  emptyState: {
+    alignItems: "center",
+    paddingVertical: 60,
+    paddingHorizontal: 32,
+  },
+  emptyIconWrapper: {
+    width: 120,
+    height: 120,
+    borderRadius: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 24,
+  },
+  emptyTitle: {
+    fontSize: 22,
+    fontWeight: "800",
+    marginBottom: 10,
+    letterSpacing: -0.5,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 22,
+  },
+});

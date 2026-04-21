@@ -29,10 +29,9 @@ const schemeFromBundleId = `manus${timestamp}`;
 const env = {
   // App branding - update these values directly (do not use env vars)
   appName: "KDP絵本メーカーAI",
-  appSlug: "kdp-ehon-maker",
+  appSlug: "{{project_name}}",
   // S3 URL of the app logo - set this to the URL returned by generate_image when creating custom logo
-  // Leave empty to use the default icon from assets/images/icon.png
-  logoUrl: "",
+  logoUrl: "https://d2xsxph8kpxj0f.cloudfront.net/310519663583450810/NvVHt8mUcZdui9JqUwg576/icon-2UhxCgRJcLiyPzWUD328vS.png",
   scheme: schemeFromBundleId,
   iosBundleId: bundleId,
   androidPackage: bundleId,
@@ -43,7 +42,7 @@ const config: ExpoConfig = {
   slug: env.appSlug,
   version: "1.0.0",
   orientation: "portrait",
-  icon: "./assets/images/icon.png",
+  icon: "/manus-storage/icon_6b2c3723.png",
   scheme: env.scheme,
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
@@ -56,8 +55,8 @@ const config: ExpoConfig = {
   },
   android: {
     adaptiveIcon: {
-      backgroundColor: "#E6F4FE",
-      foregroundImage: "./assets/images/android-icon-foreground.png",
+      backgroundColor: "#4F46E5",
+      foregroundImage: "/manus-storage/android-icon-foreground_935264d5.png",
       backgroundImage: "./assets/images/android-icon-background.png",
       monochromeImage: "./assets/images/android-icon-monochrome.png",
     },
@@ -82,10 +81,25 @@ const config: ExpoConfig = {
   web: {
     bundler: "metro",
     output: "static",
-    favicon: "./assets/images/favicon.png",
+    favicon: "/manus-storage/favicon_b64a8134.png",
   },
   plugins: [
     "expo-router",
+    [
+      "expo-image-picker",
+      {
+        photosPermission: "$(PRODUCT_NAME)が写真ライブラリにアクセスして絵本を作成することを許可します。",
+        cameraPermission: "$(PRODUCT_NAME)がカメラにアクセスして写真を撮影することを許可します。",
+      },
+    ],
+    [
+      "expo-media-library",
+      {
+        photosPermission: "$(PRODUCT_NAME)が写真ライブラリにアクセスすることを許可します。",
+        savePhotosPermission: "$(PRODUCT_NAME)が写真を保存することを許可します。",
+        isAccessMediaLocationEnabled: true,
+      },
+    ],
     [
       "expo-audio",
       {
@@ -102,13 +116,13 @@ const config: ExpoConfig = {
     [
       "expo-splash-screen",
       {
-        image: "./assets/images/splash-icon.png",
-        imageWidth: 200,
-        resizeMode: "contain",
-        backgroundColor: "#ffffff",
-        dark: {
-          backgroundColor: "#000000",
-        },
+        "image": "/manus-storage/splash-icon_366bada5.png",
+        "imageWidth": 200,
+        "resizeMode": "contain",
+        "backgroundColor": "#4F46E5",
+        "dark": {
+          "backgroundColor": "#312E81"
+        }
       },
     ],
     [
