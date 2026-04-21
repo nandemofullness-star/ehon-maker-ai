@@ -27,6 +27,9 @@ import { BookPreviewModal } from "@/components/book-preview-modal";
 import { StylePicker } from "@/components/style-picker";
 import { DEFAULT_STYLE_ID } from "@/constants/drawing-styles";
 import { useProjectStore, type SavedProject } from "@/hooks/use-project-store";
+import { usePremium, FREE_LIMITS } from "@/hooks/use-premium";
+import { AdBanner } from "@/components/ad-banner";
+import { UpgradeModal } from "@/components/upgrade-modal";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
@@ -75,6 +78,16 @@ export default function HomeScreen() {
   const [compareState, setCompareState] = useState<CompareState | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [selectedStyleId, setSelectedStyleId] = useState(DEFAULT_STYLE_ID);
+
+  // Monetization
+  const premium = usePremium();
+  const [upgradeModalVisible, setUpgradeModalVisible] = useState(false);
+  const [upgradeReason, setUpgradeReason] = useState<"page_limit" | "ai_limit" | "manual">("manual");
+
+  const openUpgrade = useCallback((reason: "page_limit" | "ai_limit" | "manual" = "manual") => {
+    setUpgradeReason(reason);
+    setUpgradeModalVisible(true);
+  }, []);
 
   // Project persistence
   const { saveProject, generateId } = useProjectStore();
@@ -192,6 +205,11 @@ export default function HomeScreen() {
 
   const pickImages = useCallback(async () => {
     if (isBatchProcessing || isGeneratingPdf) return;
+    // Page limit check for free users
+    if (!premium.isPremium && pages.length >= FREE_LIMITS.maxPages) {
+      openUpgrade("page_limit");
+      return;
+    }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: "images",
       allowsMultipleSelection: true,
@@ -266,6 +284,12 @@ export default function HomeScreen() {
   const remakePageById = useCallback(
     async (pageId: string) => {
       if (isBatchProcessing || isGeneratingPdf) return;
+      // Daily AI limit check for free users
+      const allowed = await premium.incrementAiCount();
+      if (!allowed) {
+        openUpgrade("ai_limit");
+        return;
+      }
 
       const page = pages.find((p) => p.id === pageId);
       if (!page) return;
@@ -306,6 +330,14 @@ export default function HomeScreen() {
 
   const batchRemakeWithAI = useCallback(async () => {
     if (pages.length === 0) return;
+    // Daily AI limit check for free users (counts as 1 use for batch)
+    if (!premium.isPremium) {
+      const allowed = await premium.incrementAiCount();
+      if (!allowed) {
+        openUpgrade("ai_limit");
+        return;
+      }
+    }
     setIsBatchProcessing(true);
     setProgress({ current: 0, total: pages.length });
 
@@ -588,6 +620,23 @@ export default function HomeScreen() {
 
   const isProcessing = isBatchProcessing || isGeneratingPdf;
 
+  // Premium badge in header
+  const PremiumBadge = premium.isPremium ? (
+    <View style={styles.premiumBadge}>
+      <MaterialIcons name="workspace-premium" size={12} color="#6366f1" />
+      <Text style={styles.premiumBadgeText}>PRO</Text>
+    </View>
+  ) : (
+    <TouchableOpacity
+      style={styles.upgradeBadge}
+      onPress={() => openUpgrade("manual")}
+      activeOpacity={0.8}
+    >
+      <MaterialIcons name="workspace-premium" size={12} color="#6366f1" />
+      <Text style={styles.upgradeBadgeText}>アップグレード</Text>
+    </TouchableOpacity>
+  );
+
   return (
     <ScreenContainer containerClassName="bg-background">
       {/* Header */}
@@ -602,6 +651,7 @@ export default function HomeScreen() {
           </Text>
         </View>
         <View style={styles.headerRight}>
+          {PremiumBadge}
           <Text style={[styles.headerSubtitle, { color: colors.muted, borderColor: colors.border }]}>
             215.9 × 215.9 mm
           </Text>
@@ -759,8 +809,28 @@ export default function HomeScreen() {
               </View>
             )}
 
-            {/* Warning banner */}
-            {pages.length > 0 && pages.length < 24 && (
+          {/* Free plan page limit banner */}
+          {!premium.isPremium && pages.length > 0 && (
+            <View style={[styles.warningBanner, { backgroundColor: "#EEF2FF", borderColor: "#6366f1" }]}>
+              <MaterialIcons name="workspace-premium" size={20} color="#6366f1" />
+              <View style={styles.warningText}>
+                <Text style={[styles.warningTitle, { color: "#6366f1" }]}>
+                  {premium.isPremium ? "" : `無料版: ${pages.length}/${FREE_LIMITS.maxPages}ページ`}
+                </Text>
+                <Text style={[styles.warningBody, { color: "#4338ca" }]}>
+                  {premium.remainingAiCount === Infinity
+                    ? ""
+                    : `本日のAI変換残り${premium.remainingAiCount}回 · `}
+                  <Text style={{ textDecorationLine: "underline" }} onPress={() => openUpgrade("manual")}>
+                    プレミアムで制限解除
+                  </Text>
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Warning banner */}
+          {pages.length > 0 && pages.length < 24 && (
               <View style={[styles.warningBanner, { backgroundColor: "#FEF3C7", borderColor: "#F59E0B" }]}>
                 <MaterialIcons name="warning" size={20} color="#D97706" />
                 <View style={styles.warningText}>
@@ -814,6 +884,18 @@ export default function HomeScreen() {
           }}
         />
       )}
+
+      {/* Ad Banner (free users only) */}
+      <AdBanner isPremium={premium.isPremium} />
+
+      {/* Upgrade Modal */}
+      <UpgradeModal
+        visible={upgradeModalVisible}
+        onClose={() => setUpgradeModalVisible(false)}
+        onPurchase={premium.purchasePremium}
+        onRestore={premium.restorePurchases}
+        triggerReason={upgradeReason}
+      />
 
       {/* Book Preview Modal */}
       <BookPreviewModal
@@ -1238,5 +1320,36 @@ const styles = StyleSheet.create({
   dragHintText: {
     fontSize: 11,
     fontWeight: "600",
+  },
+  premiumBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: "#EEF2FF",
+  },
+  premiumBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#6366f1",
+    letterSpacing: 0.5,
+  },
+  upgradeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: "#EEF2FF",
+    borderWidth: 1,
+    borderColor: "#c7d2fe",
+  },
+  upgradeBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#6366f1",
   },
 });

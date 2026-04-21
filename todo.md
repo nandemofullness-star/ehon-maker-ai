@@ -101,3 +101,16 @@
 - [x] ドラッグ中のカードをインディゴ枠線＋影でハイライト表示（ScaleDecorator 0.96）
 - [x] コントロールバーに「長押しでドラッグ並び替え」ヒントテキストを追加
 - [x] assignPageTypes を onReorder 後に再実行（表紙・裏表紙の自動再割り当て）
+
+## 収益化機能（広告 + 決済）
+- [x] 決済サービスの調査・選定（RevenueCat + Google Play Billingを推奨）
+- [x] AdMob SDK 導入（react-native-google-mobile-ads）
+- [x] 無料版：ホーム画面下部にバナー広告を表示（AdBannerコンポーネント）
+- [x] プレミアムプラン状態管理（usePremiumフック + AsyncStorage + RevenueCat）
+- [x] アップグレードモーダルの作成（UpgradeModal: プラン比較・購入ボタン・復元ボタン）
+- [x] プレミアム時は広告非表示・全機能解放
+- [x] 無料版の制限設定（最大8ページ、AI変換3回/日）
+- [x] ページ上限・ AI上限到達時にアップグレードモーダルを自動表示
+- [x] ヘッダーに「PRO」バッジ（プレミアム）・「アップグレード」ボタン（無料）を表示
+- [x] 無料版バナー（ページ数カウンター + AI残り回数表示）をコントロールバーに追加
+- [x] app.config.tsにAdMobプラグイン設定を追加（テストID使用）
