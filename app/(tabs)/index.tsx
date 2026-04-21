@@ -111,6 +111,38 @@ export default function HomeScreen() {
     [remakeImageMutation]
   );
 
+  const remakePageById = useCallback(
+    async (pageId: string) => {
+      if (isBatchProcessing || isGeneratingPdf) return;
+
+      const page = pages.find((p) => p.id === pageId);
+      if (!page) return;
+
+      // Mark this page as processing
+      setPages((prev) =>
+        prev.map((p) => (p.id === pageId ? { ...p, isProcessing: true } : p))
+      );
+
+      try {
+        const newUri = await remakeSinglePage(page);
+        setPages((prev) =>
+          prev.map((p) =>
+            p.id === pageId
+              ? { ...p, uri: newUri, isProcessing: false, isRemade: true }
+              : p
+          )
+        );
+      } catch (err: any) {
+        console.error(`ページのリメイク失敗:`, err);
+        Alert.alert("エラー", `AI変換に失敗しました: ${err.message}`);
+        setPages((prev) =>
+          prev.map((p) => (p.id === pageId ? { ...p, isProcessing: false } : p))
+        );
+      }
+    },
+    [pages, isBatchProcessing, isGeneratingPdf, remakeSinglePage]
+  );
+
   const batchRemakeWithAI = useCallback(async () => {
     if (pages.length === 0) return;
     setIsBatchProcessing(true);
@@ -258,6 +290,34 @@ export default function HomeScreen() {
             editable={!isBatchProcessing && !isGeneratingPdf}
           />
 
+        {/* Individual AI remake button */}
+          {!item.isProcessing && (
+            <TouchableOpacity
+              onPress={() => remakePageById(item.id)}
+              disabled={isBatchProcessing || isGeneratingPdf}
+              style={[
+                styles.singleAiButton,
+                { backgroundColor: item.isRemade ? `${colors.success}22` : `${colors.primary}18` },
+                (isBatchProcessing || isGeneratingPdf) && styles.disabledButton,
+              ]}
+              activeOpacity={0.7}
+            >
+              <MaterialIcons
+                name={item.isRemade ? "refresh" : "auto-awesome"}
+                size={13}
+                color={item.isRemade ? colors.success : colors.primary}
+              />
+              <Text
+                style={[
+                  styles.singleAiButtonText,
+                  { color: item.isRemade ? colors.success : colors.primary },
+                ]}
+              >
+                {item.isRemade ? "再変換" : "AI変換"}
+              </Text>
+            </TouchableOpacity>
+          )}
+
           {/* Action buttons */}
           <View style={styles.cardActions}>
             <View style={styles.moveButtons}>
@@ -315,7 +375,7 @@ export default function HomeScreen() {
         </View>
       </View>
     ),
-    [colors, pages.length, isBatchProcessing, isGeneratingPdf, movePage, removePage, handleTextChange]
+    [colors, pages.length, isBatchProcessing, isGeneratingPdf, movePage, removePage, handleTextChange, remakePageById]
   );
 
   const isProcessing = isBatchProcessing || isGeneratingPdf;
@@ -735,6 +795,21 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.4,
+  },
+  singleAiButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    marginBottom: 4,
+  },
+  singleAiButtonText: {
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.3,
   },
   emptyState: {
     alignItems: "center",

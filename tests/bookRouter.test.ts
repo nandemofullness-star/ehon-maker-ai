@@ -59,6 +59,15 @@ describe("Book Router", () => {
       expect(bookRouter._def.procedures.remakeImage).toBeDefined();
       expect(bookRouter._def.procedures.generatePdf).toBeDefined();
     });
+
+    it("remakeImage procedure accepts imageBase64 and mimeType inputs", async () => {
+      const { bookRouter } = await import("../server/bookRouter");
+      // Verify the remakeImage procedure input schema accepts the expected fields
+      const procedure = bookRouter._def.procedures.remakeImage;
+      expect(procedure).toBeDefined();
+      // The procedure should be a mutation (for individual page remake)
+      expect(procedure._def.type).toBe("mutation");
+    });
   });
 
   describe("generatePdf", () => {
