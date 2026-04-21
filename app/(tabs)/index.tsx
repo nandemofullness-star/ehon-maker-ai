@@ -23,6 +23,7 @@ import { useColors } from "@/hooks/use-colors";
 import { MaterialIcons } from "@expo/vector-icons";
 import { trpc } from "@/lib/trpc";
 import { CompareModal } from "@/components/compare-modal";
+import { BookPreviewModal } from "@/components/book-preview-modal";
 import { StylePicker } from "@/components/style-picker";
 import { DEFAULT_STYLE_ID } from "@/constants/drawing-styles";
 import { useProjectStore, type SavedProject } from "@/hooks/use-project-store";
@@ -72,6 +73,7 @@ export default function HomeScreen() {
   const remakeImageMutation = trpc.book.remakeImage.useMutation();
   const generatePdfMutation = trpc.book.generatePdf.useMutation();
   const [compareState, setCompareState] = useState<CompareState | null>(null);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [selectedStyleId, setSelectedStyleId] = useState(DEFAULT_STYLE_ID);
 
   // Project persistence
@@ -703,6 +705,19 @@ export default function HomeScreen() {
                 {/* Bottom row: action buttons */}
                 <View style={styles.controlButtons}>
                   <TouchableOpacity
+                    onPress={() => setIsPreviewOpen(true)}
+                    disabled={isProcessing || pages.length === 0}
+                    style={[
+                      styles.previewButton,
+                      { backgroundColor: `${colors.primary}18`, borderColor: `${colors.primary}40` },
+                      (isProcessing || pages.length === 0) && styles.disabledButton,
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <MaterialIcons name="menu-book" size={16} color={colors.primary} />
+                    <Text style={[styles.previewButtonText, { color: colors.primary }]}>プレビュー</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
                     onPress={batchRemakeWithAI}
                     disabled={isProcessing}
                     style={[
@@ -811,6 +826,14 @@ export default function HomeScreen() {
           }}
         />
       )}
+
+      {/* Book Preview Modal */}
+      <BookPreviewModal
+        visible={isPreviewOpen}
+        pages={pages}
+        bookTitle={currentProjectTitle || undefined}
+        onClose={() => setIsPreviewOpen(false)}
+      />
     </ScreenContainer>
   );
 }
@@ -1194,5 +1217,18 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "800",
     letterSpacing: 0.5,
+  },
+  previewButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  previewButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
   },
 });

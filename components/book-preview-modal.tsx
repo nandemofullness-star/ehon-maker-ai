@@ -1,0 +1,416 @@
+import React, { useRef, useCallback, useState } from "react";
+import {
+  View,
+  Text,
+  Modal,
+  TouchableOpacity,
+  FlatList,
+  Dimensions,
+  StyleSheet,
+  StatusBar,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
+} from "react-native";
+import { Image } from "expo-image";
+import { MaterialIcons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+type PageType = "cover" | "back-cover" | "inner";
+
+interface PreviewPage {
+  id: string;
+  uri: string;
+  text: string;
+  pageType: PageType;
+}
+
+interface BookPreviewModalProps {
+  visible: boolean;
+  pages: PreviewPage[];
+  bookTitle?: string;
+  onClose: () => void;
+}
+
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
+// Square card: full width with horizontal padding
+const CARD_PADDING = 20;
+const CARD_SIZE = SCREEN_W - CARD_PADDING * 2;
+
+export function BookPreviewModal({
+  visible,
+  pages,
+  bookTitle,
+  onClose,
+}: BookPreviewModalProps) {
+  const insets = useSafeAreaInsets();
+  const flatListRef = useRef<FlatList>(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  const handleScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetY = e.nativeEvent.contentOffset.y;
+      const itemHeight = CARD_SIZE + 24; // card + gap
+      const idx = Math.round(offsetY / itemHeight);
+      setCurrentIndex(Math.max(0, Math.min(idx, pages.length - 1)));
+    },
+    [pages.length]
+  );
+
+  const renderPage = useCallback(
+    ({ item, index }: { item: PreviewPage; index: number }) => {
+      const isCover = item.pageType === "cover";
+      const isBackCover = item.pageType === "back-cover";
+
+      return (
+        <View style={styles.pageWrapper}>
+          <View style={styles.pageCard}>
+            {/* Full-bleed image */}
+            <Image
+              source={{ uri: item.uri }}
+              style={styles.pageImage}
+              contentFit="cover"
+              transition={200}
+            />
+
+            {/* COVER layout */}
+            {isCover && (
+              <>
+                <View style={styles.coverGradient} />
+                {item.text ? (
+                  <View style={styles.coverTitleContainer}>
+                    <Text style={styles.coverTitle} numberOfLines={4}>
+                      {item.text}
+                    </Text>
+                  </View>
+                ) : null}
+                <View style={[styles.coverBadge, { backgroundColor: "#4F46E5" }]}>
+                  <Text style={styles.coverBadgeText}>表紙</Text>
+                </View>
+              </>
+            )}
+
+            {/* BACK COVER layout */}
+            {isBackCover && (
+              <>
+                <View style={styles.backCoverGradient} />
+                {item.text ? (
+                  <View style={styles.backCoverAuthorContainer}>
+                    <Text style={styles.backCoverAuthor} numberOfLines={3}>
+                      {item.text}
+                    </Text>
+                  </View>
+                ) : null}
+                <View style={[styles.coverBadge, { backgroundColor: "#7C3AED" }]}>
+                  <Text style={styles.coverBadgeText}>裏表紙</Text>
+                </View>
+              </>
+            )}
+
+            {/* INNER PAGE layout */}
+            {!isCover && !isBackCover && item.text ? (
+              <View style={styles.innerTextContainer}>
+                <Text style={styles.innerText} numberOfLines={4}>
+                  {item.text}
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Page number (inner only) */}
+            {!isCover && !isBackCover && (
+              <View style={styles.pageNumberBadge}>
+                <Text style={styles.pageNumberText}>P.{index + 1}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      );
+    },
+    []
+  );
+
+  const keyExtractor = useCallback((item: PreviewPage) => item.id, []);
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <StatusBar barStyle="light-content" backgroundColor="#0a0a14" />
+      <View style={[styles.container, { paddingTop: insets.top }]}>
+        {/* Header */}
+        <View style={styles.header}>
+          <View style={styles.headerLeft}>
+            <MaterialIcons name="menu-book" size={20} color="#a5b4fc" />
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {bookTitle || "絵本プレビュー"}
+            </Text>
+          </View>
+          <View style={styles.headerRight}>
+            <Text style={styles.pageCounter}>
+              {pages.length > 0 ? `${currentIndex + 1} / ${pages.length}` : "0 / 0"}
+            </Text>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeButton}
+              activeOpacity={0.75}
+            >
+              <MaterialIcons name="close" size={22} color="#e2e8f0" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Page list */}
+        {pages.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <MaterialIcons name="photo-library" size={60} color="#4a5568" />
+            <Text style={styles.emptyText}>ページがありません</Text>
+          </View>
+        ) : (
+          <FlatList
+            ref={flatListRef}
+            data={pages}
+            keyExtractor={keyExtractor}
+            renderItem={renderPage}
+            showsVerticalScrollIndicator={false}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            contentContainerStyle={[
+              styles.listContent,
+              { paddingBottom: insets.bottom + 24 },
+            ]}
+            snapToInterval={CARD_SIZE + 24}
+            decelerationRate="fast"
+          />
+        )}
+
+        {/* Bottom progress dots */}
+        {pages.length > 1 && pages.length <= 24 && (
+          <View style={[styles.dotsContainer, { paddingBottom: insets.bottom + 8 }]}>
+            {pages.map((_, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.dot,
+                  i === currentIndex ? styles.dotActive : styles.dotInactive,
+                ]}
+              />
+            ))}
+          </View>
+        )}
+      </View>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#0a0a14",
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.08)",
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+  },
+  headerTitle: {
+    color: "#e2e8f0",
+    fontSize: 16,
+    fontWeight: "700",
+    flex: 1,
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  pageCounter: {
+    color: "#94a3b8",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  closeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 16,
+  },
+  emptyText: {
+    color: "#4a5568",
+    fontSize: 16,
+  },
+  listContent: {
+    paddingTop: 20,
+    paddingHorizontal: CARD_PADDING,
+    gap: 24,
+  },
+  pageWrapper: {
+    alignItems: "center",
+  },
+  pageCard: {
+    width: CARD_SIZE,
+    height: CARD_SIZE,
+    borderRadius: 20,
+    overflow: "hidden",
+    backgroundColor: "#1a1a2e",
+    shadowColor: "#000",
+    shadowOpacity: 0.6,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
+  },
+  pageImage: {
+    width: CARD_SIZE,
+    height: CARD_SIZE,
+  },
+  // Cover
+  coverGradient: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: "65%",
+    backgroundColor: "rgba(10,10,30,0.55)",
+  },
+  coverTitleContainer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: "65%",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  coverTitle: {
+    color: "#ffffff",
+    fontSize: 28,
+    fontWeight: "900",
+    textAlign: "center",
+    lineHeight: 36,
+    textShadowColor: "rgba(0,0,0,0.7)",
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 6,
+    letterSpacing: -0.5,
+  },
+  coverBadge: {
+    position: "absolute",
+    bottom: 14,
+    right: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  coverBadgeText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  // Back cover
+  backCoverGradient: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: "55%",
+    backgroundColor: "rgba(5,5,20,0.6)",
+  },
+  backCoverAuthorContainer: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: "55%",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingHorizontal: 24,
+    paddingBottom: 48,
+  },
+  backCoverAuthor: {
+    color: "#e2e8f0",
+    fontSize: 18,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 26,
+    textShadowColor: "rgba(0,0,0,0.6)",
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 4,
+  },
+  // Inner page
+  innerTextContainer: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "rgba(0,0,0,0.52)",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  innerText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "600",
+    textAlign: "center",
+    lineHeight: 22,
+    textShadowColor: "rgba(0,0,0,0.5)",
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+  },
+  pageNumberBadge: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  pageNumberText: {
+    color: "#e2e8f0",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  // Progress dots
+  dotsContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    flexWrap: "wrap",
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    gap: 5,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  dotActive: {
+    backgroundColor: "#818cf8",
+    width: 18,
+  },
+  dotInactive: {
+    backgroundColor: "rgba(255,255,255,0.2)",
+  },
+});
