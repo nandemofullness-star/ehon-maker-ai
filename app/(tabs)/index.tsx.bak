@@ -27,9 +27,9 @@ import { BookPreviewModal } from "@/components/book-preview-modal";
 import { StylePicker } from "@/components/style-picker";
 import { DEFAULT_STYLE_ID } from "@/constants/drawing-styles";
 import { useProjectStore, type SavedProject } from "@/hooks/use-project-store";
-import { usePremium, FREE_AI_USES_PER_CYCLE } from "@/hooks/use-premium";
+import { usePremium, FREE_LIMITS } from "@/hooks/use-premium";
 import { AdBanner } from "@/components/ad-banner";
-import { RewardAdModal } from "@/components/reward-ad-modal";
+import { UpgradeModal } from "@/components/upgrade-modal";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
@@ -79,8 +79,15 @@ export default function HomeScreen() {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [selectedStyleId, setSelectedStyleId] = useState(DEFAULT_STYLE_ID);
 
-  // Monetization (ad-only model)
+  // Monetization
   const premium = usePremium();
+  const [upgradeModalVisible, setUpgradeModalVisible] = useState(false);
+  const [upgradeReason, setUpgradeReason] = useState<"page_limit" | "ai_limit" | "manual">("manual");
+
+  const openUpgrade = useCallback((reason: "page_limit" | "ai_limit" | "manual" = "manual") => {
+    setUpgradeReason(reason);
+    setUpgradeModalVisible(true);
+  }, []);
 
   // Project persistence
   const { saveProject, generateId } = useProjectStore();
@@ -199,6 +206,10 @@ export default function HomeScreen() {
   const pickImages = useCallback(async () => {
     if (isBatchProcessing || isGeneratingPdf) return;
     // Page limit check for free users
+    if (!premium.isPremium && pages.length >= FREE_LIMITS.maxPages) {
+      openUpgrade("page_limit");
+      return;
+    }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: "images",
       allowsMultipleSelection: true,
@@ -273,10 +284,10 @@ export default function HomeScreen() {
   const remakePageById = useCallback(
     async (pageId: string) => {
       if (isBatchProcessing || isGeneratingPdf) return;
-      // Ad-only limit check: consume one AI use; if 0 remaining, reward ad modal is shown
-      const allowed = await premium.consumeAiUse();
+      // Daily AI limit check for free users
+      const allowed = await premium.incrementAiCount();
       if (!allowed) {
-        // showRewardAd is now true — modal will appear automatically
+        openUpgrade("ai_limit");
         return;
       }
 
@@ -319,11 +330,13 @@ export default function HomeScreen() {
 
   const batchRemakeWithAI = useCallback(async () => {
     if (pages.length === 0) return;
-    // Ad-only limit check: consume one AI use for the batch
-    const allowed = await premium.consumeAiUse();
-    if (!allowed) {
-      // showRewardAd is now true — modal will appear automatically
-      return;
+    // Daily AI limit check for free users (counts as 1 use for batch)
+    if (!premium.isPremium) {
+      const allowed = await premium.incrementAiCount();
+      if (!allowed) {
+        openUpgrade("ai_limit");
+        return;
+      }
     }
     setIsBatchProcessing(true);
     setProgress({ current: 0, total: pages.length });
@@ -607,12 +620,21 @@ export default function HomeScreen() {
 
   const isProcessing = isBatchProcessing || isGeneratingPdf;
 
-  // AI uses remaining badge in header
-  const AiUsesBadge = (
+  // Premium badge in header
+  const PremiumBadge = premium.isPremium ? (
     <View style={styles.premiumBadge}>
-      <MaterialIcons name="auto-awesome" size={12} color="#6366f1" />
-      <Text style={styles.premiumBadgeText}>AI残り{premium.aiUsesRemaining}回</Text>
+      <MaterialIcons name="workspace-premium" size={12} color="#6366f1" />
+      <Text style={styles.premiumBadgeText}>PRO</Text>
     </View>
+  ) : (
+    <TouchableOpacity
+      style={styles.upgradeBadge}
+      onPress={() => openUpgrade("manual")}
+      activeOpacity={0.8}
+    >
+      <MaterialIcons name="workspace-premium" size={12} color="#6366f1" />
+      <Text style={styles.upgradeBadgeText}>アップグレード</Text>
+    </TouchableOpacity>
   );
 
   return (
@@ -629,7 +651,7 @@ export default function HomeScreen() {
           </Text>
         </View>
         <View style={styles.headerRight}>
-          {AiUsesBadge}
+          {PremiumBadge}
           <Text style={[styles.headerSubtitle, { color: colors.muted, borderColor: colors.border }]}>
             215.9 × 215.9 mm
           </Text>
@@ -787,16 +809,21 @@ export default function HomeScreen() {
               </View>
             )}
 
-          {/* AI uses remaining info banner */}
-          {pages.length > 0 && premium.aiUsesRemaining <= 1 && (
+          {/* Free plan page limit banner */}
+          {!premium.isPremium && pages.length > 0 && (
             <View style={[styles.warningBanner, { backgroundColor: "#EEF2FF", borderColor: "#6366f1" }]}>
-              <MaterialIcons name="auto-awesome" size={20} color="#6366f1" />
+              <MaterialIcons name="workspace-premium" size={20} color="#6366f1" />
               <View style={styles.warningText}>
                 <Text style={[styles.warningTitle, { color: "#6366f1" }]}>
-                  AI変換残り{premium.aiUsesRemaining}回
+                  {premium.isPremium ? "" : `無料版: ${pages.length}/${FREE_LIMITS.maxPages}ページ`}
                 </Text>
                 <Text style={[styles.warningBody, { color: "#4338ca" }]}>
-                  使い切ると広告を視聴してプラス{FREE_AI_USES_PER_CYCLE}回追加できます。
+                  {premium.remainingAiCount === Infinity
+                    ? ""
+                    : `本日のAI変換残り${premium.remainingAiCount}回 · `}
+                  <Text style={{ textDecorationLine: "underline" }} onPress={() => openUpgrade("manual")}>
+                    プレミアムで制限解除
+                  </Text>
                 </Text>
               </View>
             </View>
@@ -858,14 +885,16 @@ export default function HomeScreen() {
         />
       )}
 
-      {/* Ad Banner (always shown) */}
-      <AdBanner />
+      {/* Ad Banner (free users only) */}
+      <AdBanner isPremium={premium.isPremium} />
 
-      {/* Reward Ad Modal — shown when AI uses run out */}
-      <RewardAdModal
-        visible={premium.showRewardAd}
-        onAdWatched={premium.onAdWatched}
-        onDismiss={premium.dismissAdModal}
+      {/* Upgrade Modal */}
+      <UpgradeModal
+        visible={upgradeModalVisible}
+        onClose={() => setUpgradeModalVisible(false)}
+        onPurchase={premium.purchasePremium}
+        onRestore={premium.restorePurchases}
+        triggerReason={upgradeReason}
       />
 
       {/* Book Preview Modal */}

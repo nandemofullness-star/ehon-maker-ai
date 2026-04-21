@@ -1,129 +1,120 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
-// ── FREE_LIMITS ──────────────────────────────────────────────────────────────
-const FREE_LIMITS = { maxPages: 8, dailyAiConversions: 3 };
+// ── Ad-only model constants ───────────────────────────────────────────────────
+const FREE_AI_USES_PER_CYCLE = 3;
 
-describe("FREE_LIMITS", () => {
-  it("maxPages is 8 for free users", () => {
-    expect(FREE_LIMITS.maxPages).toBe(8);
-  });
-
-  it("dailyAiConversions is 3 for free users", () => {
-    expect(FREE_LIMITS.dailyAiConversions).toBe(3);
+describe("FREE_AI_USES_PER_CYCLE", () => {
+  it("is 3 per cycle", () => {
+    expect(FREE_AI_USES_PER_CYCLE).toBe(3);
   });
 });
 
-// ── Page limit gating ────────────────────────────────────────────────────────
-function canAddPage(isPremium: boolean, currentPageCount: number): boolean {
-  if (isPremium) return true;
-  return currentPageCount < FREE_LIMITS.maxPages;
-}
-
-describe("canAddPage", () => {
-  it("free user can add pages up to the limit", () => {
-    expect(canAddPage(false, 0)).toBe(true);
-    expect(canAddPage(false, 7)).toBe(true);
-  });
-
-  it("free user cannot exceed the page limit", () => {
-    expect(canAddPage(false, 8)).toBe(false);
-    expect(canAddPage(false, 20)).toBe(false);
-  });
-
-  it("premium user has no page limit", () => {
-    expect(canAddPage(true, 8)).toBe(true);
-    expect(canAddPage(true, 100)).toBe(true);
-  });
-});
-
-// ── Daily AI conversion gating ───────────────────────────────────────────────
-function canUseAi(isPremium: boolean, dailyCount: number): boolean {
-  if (isPremium) return true;
-  return dailyCount < FREE_LIMITS.dailyAiConversions;
-}
-
-describe("canUseAi", () => {
-  it("free user can use AI within daily limit", () => {
-    expect(canUseAi(false, 0)).toBe(true);
-    expect(canUseAi(false, 2)).toBe(true);
-  });
-
-  it("free user is blocked after reaching daily limit", () => {
-    expect(canUseAi(false, 3)).toBe(false);
-    expect(canUseAi(false, 10)).toBe(false);
-  });
-
-  it("premium user has unlimited AI conversions", () => {
-    expect(canUseAi(true, 3)).toBe(true);
-    expect(canUseAi(true, 999)).toBe(true);
-  });
-});
-
-// ── Remaining AI count display ───────────────────────────────────────────────
-function remainingAiCount(isPremium: boolean, dailyCount: number): number | null {
-  if (isPremium) return null; // unlimited
-  return Math.max(0, FREE_LIMITS.dailyAiConversions - dailyCount);
-}
-
-describe("remainingAiCount", () => {
-  it("returns correct remaining count for free users", () => {
-    expect(remainingAiCount(false, 0)).toBe(3);
-    expect(remainingAiCount(false, 1)).toBe(2);
-    expect(remainingAiCount(false, 3)).toBe(0);
-  });
-
-  it("never returns negative", () => {
-    expect(remainingAiCount(false, 10)).toBe(0);
-  });
-
-  it("returns null for premium users (unlimited)", () => {
-    expect(remainingAiCount(true, 0)).toBeNull();
-    expect(remainingAiCount(true, 100)).toBeNull();
-  });
-});
-
-// ── UpgradeModal trigger reasons ─────────────────────────────────────────────
-type TriggerReason = "page_limit" | "ai_limit" | "manual";
-
-function getUpgradeMessage(reason: TriggerReason): string {
-  switch (reason) {
-    case "page_limit":
-      return `無料版は${FREE_LIMITS.maxPages}ページまでです。プレミアムで無制限に。`;
-    case "ai_limit":
-      return `本日のAI変換回数（${FREE_LIMITS.dailyAiConversions}回）に達しました。プレミアムで無制限に。`;
-    case "manual":
-      return "プレミアムプランで全機能をご利用いただけます。";
+// ── consumeAiUse logic ────────────────────────────────────────────────────────
+function consumeAiUse(remaining: number): { allowed: boolean; newRemaining: number; showAd: boolean } {
+  if (remaining > 0) {
+    return { allowed: true, newRemaining: remaining - 1, showAd: false };
   }
+  return { allowed: false, newRemaining: 0, showAd: true };
 }
 
-describe("getUpgradeMessage", () => {
-  it("shows page limit message", () => {
-    const msg = getUpgradeMessage("page_limit");
-    expect(msg).toContain("8ページ");
+describe("consumeAiUse", () => {
+  it("allows use when remaining > 0 and decrements", () => {
+    const result = consumeAiUse(3);
+    expect(result.allowed).toBe(true);
+    expect(result.newRemaining).toBe(2);
+    expect(result.showAd).toBe(false);
   });
 
-  it("shows AI limit message with daily count", () => {
-    const msg = getUpgradeMessage("ai_limit");
-    expect(msg).toContain("3回");
+  it("allows use when remaining is 1 and decrements to 0", () => {
+    const result = consumeAiUse(1);
+    expect(result.allowed).toBe(true);
+    expect(result.newRemaining).toBe(0);
+    expect(result.showAd).toBe(false);
   });
 
-  it("shows generic message for manual trigger", () => {
-    const msg = getUpgradeMessage("manual");
-    expect(msg).toContain("プレミアム");
+  it("blocks use when remaining is 0 and triggers ad", () => {
+    const result = consumeAiUse(0);
+    expect(result.allowed).toBe(false);
+    expect(result.newRemaining).toBe(0);
+    expect(result.showAd).toBe(true);
   });
 });
 
-// ── AdBanner visibility ──────────────────────────────────────────────────────
-function shouldShowAd(isPremium: boolean): boolean {
-  return !isPremium;
+// ── onAdWatched logic ─────────────────────────────────────────────────────────
+function onAdWatched(): number {
+  return FREE_AI_USES_PER_CYCLE;
 }
 
-describe("shouldShowAd", () => {
-  it("shows ad for free users", () => {
-    expect(shouldShowAd(false)).toBe(true);
+describe("onAdWatched", () => {
+  it("grants a full new cycle of uses", () => {
+    expect(onAdWatched()).toBe(FREE_AI_USES_PER_CYCLE);
+  });
+});
+
+// ── Full cycle simulation ─────────────────────────────────────────────────────
+describe("Full ad-only cycle simulation", () => {
+  it("user gets 3 uses, then must watch ad, then gets 3 more", () => {
+    let remaining = FREE_AI_USES_PER_CYCLE;
+
+    // Use all 3
+    for (let i = 0; i < 3; i++) {
+      const r = consumeAiUse(remaining);
+      expect(r.allowed).toBe(true);
+      remaining = r.newRemaining;
+    }
+    expect(remaining).toBe(0);
+
+    // 4th use triggers ad
+    const blocked = consumeAiUse(remaining);
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.showAd).toBe(true);
+
+    // After watching ad, gets 3 more
+    remaining = onAdWatched();
+    expect(remaining).toBe(3);
+
+    // Can use again
+    const r = consumeAiUse(remaining);
+    expect(r.allowed).toBe(true);
+    expect(r.newRemaining).toBe(2);
+  });
+});
+
+// ── AI uses remaining display ─────────────────────────────────────────────────
+function getAiUsesDisplay(remaining: number): string {
+  if (remaining === 0) return "AI変換残り0回";
+  return `AI残り${remaining}回`;
+}
+
+describe("getAiUsesDisplay", () => {
+  it("shows correct remaining count", () => {
+    expect(getAiUsesDisplay(3)).toBe("AI残り3回");
+    expect(getAiUsesDisplay(1)).toBe("AI残り1回");
+    expect(getAiUsesDisplay(0)).toBe("AI変換残り0回");
+  });
+});
+
+// ── AdBanner visibility ───────────────────────────────────────────────────────
+function shouldShowAdBanner(): boolean {
+  // In ad-only model, banner is always shown
+  return true;
+}
+
+describe("shouldShowAdBanner", () => {
+  it("always shows banner in ad-only model", () => {
+    expect(shouldShowAdBanner()).toBe(true);
+  });
+});
+
+// ── Reward ad modal trigger ───────────────────────────────────────────────────
+describe("Reward ad modal", () => {
+  it("should show when remaining is 0", () => {
+    const { showAd } = consumeAiUse(0);
+    expect(showAd).toBe(true);
   });
 
-  it("hides ad for premium users", () => {
-    expect(shouldShowAd(true)).toBe(false);
+  it("should not show when remaining > 0", () => {
+    const { showAd } = consumeAiUse(2);
+    expect(showAd).toBe(false);
   });
 });
