@@ -81,7 +81,13 @@ const config: ExpoConfig = {
   web: {
     bundler: "metro",
     output: "static",
-    favicon: "/manus-storage/favicon_b64a8134.png",
+    favicon: "./assets/images/favicon.png",
+    name: "絵本メーカーAI",
+    shortName: "絵本メーカーAI",
+    description: "写真をAIで絵本風イラストに変換。KDP出版対応フルPDFを自動生成。",
+    lang: "ja",
+    themeColor: "#3730a3",
+    backgroundColor: "#1e1b4b",
   },
   plugins: [
     "expo-router",

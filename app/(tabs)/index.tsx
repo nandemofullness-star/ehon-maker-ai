@@ -17,6 +17,60 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+
+// ---- Web helpers ----
+/** Read a file URI as base64 string (web: fetch → arrayBuffer → base64) */
+async function readAsBase64(uri: string): Promise<string> {
+  if (Platform.OS !== "web") {
+    return FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  }
+  const res = await fetch(uri);
+  const buf = await res.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+/** Download a URL and return a local URI (web: return the URL directly; images are already accessible) */
+async function downloadToLocal(url: string, filename: string): Promise<string> {
+  if (Platform.OS !== "web") {
+    const localUri = (FileSystem.cacheDirectory ?? "") + filename;
+    await FileSystem.downloadAsync(url, localUri);
+    return localUri;
+  }
+  return url; // On web, remote URLs are directly usable
+}
+
+/** Share / download a file (web: trigger <a download> for PDFs, open image in new tab) */
+async function shareOrDownload(uri: string, filename: string, mimeType: string): Promise<void> {
+  if (Platform.OS !== "web") {
+    const isAvailable = await Sharing.isAvailableAsync();
+    if (isAvailable) {
+      await Sharing.shareAsync(uri, { mimeType, dialogTitle: "絵本メーカーAI - ファイルを保存・共有" });
+    } else {
+      Alert.alert("完了", `ファイルを保存しました: ${uri}`);
+    }
+    return;
+  }
+  // Web: fetch the PDF and trigger download
+  try {
+    const res = await fetch(uri);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+  } catch {
+    // Fallback: open in new tab
+    window.open(uri, "_blank");
+  }
+}
+// ---- End web helpers ----
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
@@ -88,6 +142,10 @@ export default function HomeScreen() {
   const [currentProjectTitle, setCurrentProjectTitle] = useState<string>("");
   const [isSaving, setIsSaving] = useState(false);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Web-safe save dialog state (replaces Alert.prompt which is iOS-only)
+  const [isSaveModalVisible, setIsSaveModalVisible] = useState(false);
+  const [saveModalTitle, setSaveModalTitle] = useState("");
+  const pendingSaveProjectIdRef = useRef<string | null>(null);
 
   /** Persist the current editor state to AsyncStorage */
   const persistProject = useCallback(
@@ -124,35 +182,35 @@ export default function HomeScreen() {
     [currentProjectId, currentProjectTitle, persistProject]
   );
 
-  /** Manually save with a name prompt */
+  /** Manually save with a name prompt (web-safe: uses inline modal instead of Alert.prompt) */
   const handleSaveProject = useCallback(async () => {
     if (pages.length === 0) {
       Alert.alert("保存できません", "ページを追加してから保存してください。");
       return;
     }
     const projectId = currentProjectId ?? generateId();
-    Alert.prompt(
-      "プロジェクトを保存",
-      "絵本のタイトルを入力してください",
-      async (title) => {
-        if (title === null) return; // cancelled
-        const finalTitle = title.trim() || "無題の絵本";
-        setIsSaving(true);
-        try {
-          await persistProject(projectId, finalTitle, pages, selectedStyleId);
-          setCurrentProjectId(projectId);
-          setCurrentProjectTitle(finalTitle);
-          Alert.alert("保存完了", `「${finalTitle}」を保存しました。`);
-        } catch {
-          Alert.alert("エラー", "保存に失敗しました。");
-        } finally {
-          setIsSaving(false);
-        }
-      },
-      "plain-text",
-      currentProjectTitle
-    );
-  }, [pages, currentProjectId, currentProjectTitle, selectedStyleId, generateId, persistProject]);
+    pendingSaveProjectIdRef.current = projectId;
+    setSaveModalTitle(currentProjectTitle);
+    setIsSaveModalVisible(true);
+  }, [pages, currentProjectId, currentProjectTitle, generateId]);
+
+  const handleSaveConfirm = useCallback(async () => {
+    const projectId = pendingSaveProjectIdRef.current;
+    if (!projectId) return;
+    const finalTitle = saveModalTitle.trim() || "無題の絵本";
+    setIsSaveModalVisible(false);
+    setIsSaving(true);
+    try {
+      await persistProject(projectId, finalTitle, pages, selectedStyleId);
+      setCurrentProjectId(projectId);
+      setCurrentProjectTitle(finalTitle);
+      Alert.alert("保存完了", `「${finalTitle}」を保存しました。`);
+    } catch {
+      Alert.alert("エラー", "保存に失敗しました。");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [saveModalTitle, pages, selectedStyleId, persistProject]);
 
   /** Load a project into the editor (called from projects tab via navigation params) */
   const loadProjectIntoEditor = useCallback((project: SavedProject) => {
@@ -198,7 +256,30 @@ export default function HomeScreen() {
 
   const pickImages = useCallback(async () => {
     if (isBatchProcessing || isGeneratingPdf) return;
-    // Page limit check for free users
+
+    if (Platform.OS === "web") {
+      // Web: use native file input
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.multiple = true;
+      input.onchange = () => {
+        const files = Array.from(input.files ?? []);
+        if (files.length === 0) return;
+        const newPages: Omit<PageItem, "pageType">[] = files.map((file) => ({
+          id: `${Date.now()}_${Math.random().toString(36).substring(7)}`,
+          uri: URL.createObjectURL(file),
+          originalUri: null,
+          text: "",
+          isProcessing: false,
+          isRemade: false,
+        }));
+        setPages((prev) => assignPageTypes([...prev, ...newPages] as PageItem[]));
+      };
+      input.click();
+      return;
+    }
+
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: "images",
       allowsMultipleSelection: true,
@@ -249,10 +330,8 @@ export default function HomeScreen() {
 
   const remakeSinglePage = useCallback(
     async (page: PageItem, styleId?: string): Promise<string> => {
-      // Read image as base64
-      const base64 = await FileSystem.readAsStringAsync(page.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      // Read image as base64 (web-safe)
+      const base64 = await readAsBase64(page.uri);
 
       const result = await remakeImageMutation.mutateAsync({
         imageBase64: base64,
@@ -262,10 +341,8 @@ export default function HomeScreen() {
 
       if (!result.imageUrl) throw new Error("画像URLが返されませんでした");
 
-      // Download the generated image to local cache
-      const localUri = FileSystem.cacheDirectory + `remade_${page.id}.jpg`;
-      await FileSystem.downloadAsync(result.imageUrl, localUri);
-      return localUri;
+      // Download the generated image to local cache (web-safe)
+      return downloadToLocal(result.imageUrl, `remade_${page.id}.jpg`);
     },
     [remakeImageMutation, selectedStyleId]
   );
@@ -376,13 +453,11 @@ export default function HomeScreen() {
     setProgress({ current: 0, total: pages.length });
 
     try {
-      // Encode all images to base64
+      // Encode all images to base64 (web-safe)
       const imageDataList: { base64: string; text: string; pageType: PageType }[] = [];
       for (let i = 0; i < pages.length; i++) {
         setProgress({ current: i + 1, total: pages.length });
-        const base64 = await FileSystem.readAsStringAsync(pages[i].uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
+        const base64 = await readAsBase64(pages[i].uri);
         imageDataList.push({ base64, text: pages[i].text, pageType: pages[i].pageType });
       }
 
@@ -391,19 +466,11 @@ export default function HomeScreen() {
 
       if (!result.pdfUrl) throw new Error("PDF URLが返されませんでした");
 
-      // Download PDF
-      const pdfPath = FileSystem.cacheDirectory + `kdp_picture_book_${Date.now()}.pdf`;
-      await FileSystem.downloadAsync(result.pdfUrl, pdfPath);
-
-      // Share PDF
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (isAvailable) {
-        await Sharing.shareAsync(pdfPath, {
-          mimeType: "application/pdf",
-          dialogTitle: "KDP絵本PDFを保存・共有",
-        });
-      } else {
-        Alert.alert("完了", `PDFを保存しました: ${pdfPath}`);
+      // Download / share PDF (web-safe)
+      const pdfFilename = `ehon_maker_ai_${Date.now()}.pdf`;
+      await shareOrDownload(result.pdfUrl, pdfFilename, "application/pdf");
+      if (Platform.OS === "web") {
+        Alert.alert("完了", "PDFのダウンロードを開始しました。");
       }
     } catch (err: any) {
       console.error("PDF生成エラー:", err);
@@ -875,6 +942,42 @@ export default function HomeScreen() {
         onClose={() => setIsPreviewOpen(false)}
         onGeneratePdf={generatePDF}
       />
+
+      {/* Save Project Modal (web-safe replacement for Alert.prompt) */}
+      {isSaveModalVisible && (
+        <View style={styles.saveModalOverlay}>
+          <View style={[styles.saveModalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.saveModalTitle, { color: colors.foreground }]}>プロジェクトを保存</Text>
+            <Text style={[styles.saveModalSubtitle, { color: colors.muted }]}>絵本のタイトルを入力してください</Text>
+            <TextInput
+              value={saveModalTitle}
+              onChangeText={setSaveModalTitle}
+              placeholder="無題の絵本"
+              placeholderTextColor={colors.muted}
+              style={[styles.saveModalInput, { color: colors.foreground, backgroundColor: colors.background, borderColor: colors.border }]}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={handleSaveConfirm}
+            />
+            <View style={styles.saveModalButtons}>
+              <TouchableOpacity
+                onPress={() => setIsSaveModalVisible(false)}
+                style={[styles.saveModalCancel, { borderColor: colors.border }]}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.saveModalCancelText, { color: colors.muted }]}>キャンセル</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleSaveConfirm}
+                style={[styles.saveModalConfirm, { backgroundColor: colors.primary }]}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.saveModalConfirmText}>保存</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
     </ScreenContainer>
   );
 }
@@ -1321,5 +1424,68 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: "#6366f1",
+  },
+  // Save project modal styles
+  saveModalOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 999,
+  },
+  saveModalCard: {
+    width: "85%",
+    maxWidth: 360,
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 24,
+    gap: 12,
+  },
+  saveModalTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  saveModalSubtitle: {
+    fontSize: 13,
+    marginTop: -4,
+  },
+  saveModalInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    marginTop: 4,
+  },
+  saveModalButtons: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  saveModalCancel: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: "center",
+  },
+  saveModalCancelText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  saveModalConfirm: {
+    flex: 1,
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: "center",
+  },
+  saveModalConfirmText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#fff",
   },
 });
