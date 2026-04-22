@@ -31,7 +31,7 @@ const env = {
   appName: "KDP絵本メーカーAI",
   appSlug: "{{project_name}}",
   // S3 URL of the app logo - set this to the URL returned by generate_image when creating custom logo
-  logoUrl: "https://d2xsxph8kpxj0f.cloudfront.net/310519663583450810/NvVHt8mUcZdui9JqUwg576/icon-2UhxCgRJcLiyPzWUD328vS.png",
+  logoUrl: "https://d2xsxph8kpxj0f.cloudfront.net/310519663583450810/NvVHt8mUcZdui9JqUwg576/icon_512-XKQCBf5pNWrmy8LbrE7a7m.png",
   scheme: schemeFromBundleId,
   iosBundleId: bundleId,
   androidPackage: bundleId,
