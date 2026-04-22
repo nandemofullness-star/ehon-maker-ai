@@ -2,6 +2,8 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
+import path from "path";
+import fs from "fs";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
@@ -69,6 +71,25 @@ async function startServer() {
       createContext,
     }),
   );
+
+  // Serve static web build if it exists (for production web hosting)
+  const webBuildPath = path.join(process.cwd(), "web-build");
+  if (fs.existsSync(webBuildPath)) {
+    app.use(express.static(webBuildPath));
+    // SPA fallback: serve index.html for all non-API routes
+    app.get("*", (req, res, next) => {
+      if (req.path.startsWith("/api/") || req.path.startsWith("/manus-storage/")) {
+        return next();
+      }
+      const indexPath = path.join(webBuildPath, "index.html");
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        next();
+      }
+    });
+    console.log(`[api] serving static web build from ${webBuildPath}`);
+  }
 
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);
