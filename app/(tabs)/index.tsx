@@ -624,8 +624,7 @@ export default function HomeScreen() {
             <MaterialIcons name="menu-book" size={22} color="#fff" />
           </View>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>
-            KDP絵本メーカー{" "}
-            <Text style={{ color: colors.primary }}>AI</Text>
+            絵本メーカー<Text style={{ color: colors.primary }}>AI</Text>
           </Text>
         </View>
         <View style={styles.headerRight}>
