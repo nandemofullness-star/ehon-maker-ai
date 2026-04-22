@@ -30,6 +30,7 @@ const MAPPING = {
   "exclamationmark.triangle.fill": "warning",
   "arrow.up.circle.fill": "upload",
   "folder.fill": "folder",
+  "questionmark.circle.fill": "help",
 } as IconMapping;
 
 /**
