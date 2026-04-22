@@ -17,6 +17,7 @@ import {
 import { MaterialIcons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { FREE_AI_USES_PER_CYCLE } from "@/hooks/use-premium";
+import { AD_UNIT_IDS } from "@/components/ad-banner";
 
 interface RewardAdModalProps {
   visible: boolean;
@@ -45,10 +46,10 @@ export function RewardAdModal({ visible, onAdWatched, onDismiss }: RewardAdModal
 
       // Production: show rewarded ad via AdMob
       try {
-        const { RewardedAd, RewardedAdEventType, TestIds } =
+        const { RewardedAd, RewardedAdEventType } =
           require("react-native-google-mobile-ads") as typeof import("react-native-google-mobile-ads");
 
-        const adUnitId = TestIds.REWARDED;
+        const adUnitId = (AD_UNIT_IDS as any).rewarded ?? AD_UNIT_IDS.banner!;
         const rewarded = RewardedAd.createForAdRequest(adUnitId, {
           requestNonPersonalizedAdsOnly: true,
         });

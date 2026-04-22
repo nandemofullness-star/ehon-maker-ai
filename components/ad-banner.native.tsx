@@ -3,14 +3,14 @@ import { View, Platform, StyleSheet } from "react-native";
 
 export const AD_UNIT_IDS = {
   banner: Platform.select({
-    android: "ca-app-pub-3940256099942544/6300978111", // Test banner
-    ios: "ca-app-pub-3940256099942544/2934735716",
-    default: "ca-app-pub-3940256099942544/6300978111",
+    android: "ca-app-pub-6254585875903659/9198980584", // Production banner (Android)
+    ios: "ca-app-pub-6254585875903659/3479750043",     // Production banner (iOS)
+    default: "ca-app-pub-6254585875903659/9198980584",
   }),
-  interstitial: Platform.select({
-    android: "ca-app-pub-3940256099942544/1033173712", // Test interstitial
-    ios: "ca-app-pub-3940256099942544/4411468910",
-    default: "ca-app-pub-3940256099942544/1033173712",
+  rewarded: Platform.select({
+    android: "ca-app-pub-6254585875903659/1045158396", // Production rewarded (Android)
+    ios: "ca-app-pub-6254585875903659/3256600795",     // Production rewarded (iOS)
+    default: "ca-app-pub-6254585875903659/1045158396",
   }),
 };
 
@@ -22,11 +22,11 @@ export function AdBanner({ isPremium = false }: AdBannerProps) {
   if (isPremium) return null;
 
   try {
-    const { BannerAd, BannerAdSize, TestIds } = require("react-native-google-mobile-ads");
+    const { BannerAd, BannerAdSize } = require("react-native-google-mobile-ads");
     return (
       <View style={styles.container}>
         <BannerAd
-          unitId={AD_UNIT_IDS.banner ?? TestIds.BANNER}
+          unitId={AD_UNIT_IDS.banner!}
           size={BannerAdSize.BANNER}
           requestOptions={{ requestNonPersonalizedAdsOnly: false }}
         />

@@ -137,11 +137,8 @@ const config: ExpoConfig = {
     [
       "react-native-google-mobile-ads",
       {
-        // Replace with real AdMob App IDs before production
-        // Android: ca-app-pub-XXXXXXXXXXXXXXXX~XXXXXXXXXX
-        // iOS: ca-app-pub-XXXXXXXXXXXXXXXX~XXXXXXXXXX
-        androidAppId: "ca-app-pub-3940256099942544~3347511713", // Test App ID
-        iosAppId: "ca-app-pub-3940256099942544~1458002511",     // Test App ID
+        androidAppId: "ca-app-pub-6254585875903659~1953233779", // Production App ID (Android)
+        iosAppId: "ca-app-pub-6254585875903659~6283361021",     // Production App ID (iOS)
       },
     ],
   ],
