@@ -1,0 +1,27 @@
+{
+  "name": "絵本メーカーAI",
+  "short_name": "絵本メーカーAI",
+  "description": "写真をAIで絵本風イラストに変換。KDP出版対応PDFを自動生成。",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1e1b4b",
+  "theme_color": "#3730a3",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "photo"],
+  "screenshots": []
+}
