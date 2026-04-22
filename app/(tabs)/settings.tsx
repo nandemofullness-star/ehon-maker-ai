@@ -43,7 +43,7 @@ export default function SettingsScreen() {
           <View style={styles.infoRow}>
             <MaterialIcons name="menu-book" size={20} color={colors.primary} />
             <View style={styles.infoText}>
-              <Text style={[styles.infoLabel, { color: colors.foreground }]}>KDP絵本メーカーAI</Text>
+              <Text style={[styles.infoLabel, { color: colors.foreground }]}>絵本メーカーAI</Text>
               <Text style={[styles.infoValue, { color: colors.muted }]}>バージョン {appVersion}</Text>
             </View>
           </View>

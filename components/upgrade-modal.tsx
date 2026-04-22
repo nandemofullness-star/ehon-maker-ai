@@ -100,7 +100,7 @@ export function UpgradeModal({
           {/* Hero */}
           <View style={styles.hero}>
             <Text style={styles.heroEmoji}>✨</Text>
-            <Text style={styles.heroTitle}>KDP絵本メーカーAI</Text>
+            <Text style={styles.heroTitle}>絵本メーカーAI</Text>
             <Text style={styles.heroSubtitle}>プレミアム</Text>
           </View>
 
