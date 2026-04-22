@@ -64,6 +64,11 @@ async function startServer() {
     res.json({ ok: true, timestamp: Date.now() });
   });
 
+  // /health alias for UptimeRobot monitoring (no /api prefix needed)
+  app.get("/health", (_req, res) => {
+    res.json({ ok: true, timestamp: Date.now() });
+  });
+
   app.use(
     "/api/trpc",
     createExpressMiddleware({
