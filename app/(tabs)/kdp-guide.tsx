@@ -1,225 +1,278 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ScrollView,
-  Text,
-  View,
-  TouchableOpacity,
+  Animated,
   Linking,
+  ScrollView,
   StyleSheet,
-  Alert,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────
+interface SubStep {
+  text: string;          // 操作の説明
+  example?: string;      // 入力例（黄色ボックス）
+  note?: string;         // 補足（グレーボックス）
+  highlight?: string;    // 画面上の場所を示すラベル（青ボックス）
+}
 
-type StepItem = {
+interface Step {
   id: string;
-  label: string;
-  required: boolean;
-  tip: string;
-  highlight?: boolean;
-};
-
-type Section = {
   title: string;
-  items: StepItem[];
-};
+  required: boolean;     // 必須かどうか
+  substeps: SubStep[];
+}
 
-type Tab = {
+interface Phase {
   id: string;
   label: string;
   emoji: string;
-  sections: Section[];
-  note?: string;
-};
+  description: string;
+  steps: Step[];
+}
 
-// ─── Guide Data ───────────────────────────────────────────────────────────────
-
-const TABS: Tab[] = [
+// ─────────────────────────────────────────────
+// Guide Data
+// ─────────────────────────────────────────────
+const PHASES: Phase[] = [
+  {
+    id: "signin",
+    label: "準備",
+    emoji: "🔑",
+    description: "まずAmazonアカウントでKDPにサインインします。",
+    steps: [
+      {
+        id: "s_open",
+        title: "KDPのサイトを開く",
+        required: true,
+        substeps: [
+          {
+            text: "ブラウザで「kdp.amazon.co.jp」を開きます。",
+            highlight: "🌐 URL欄に入力：kdp.amazon.co.jp",
+          },
+          {
+            text: "画面右側の黄色い「サインイン」ボタンをタップします。",
+            highlight: "📍 右側の黄色ボタン「サインイン」",
+          },
+        ],
+      },
+      {
+        id: "s_login",
+        title: "Amazonアカウントでログイン",
+        required: true,
+        substeps: [
+          {
+            text: "普段使っているAmazonのメールアドレスとパスワードを入力してサインインします。",
+            example: "メール：yourname@example.com\nパスワード：（Amazonのパスワード）",
+          },
+          {
+            text: "サインイン後、「本棚」画面が表示されれば準備完了です。",
+            note: "初回ログイン時はアカウント情報（銀行口座・住所など）の入力を求められる場合があります。出版前に設定しておきましょう。",
+          },
+        ],
+      },
+      {
+        id: "s_new",
+        title: "「紙書籍」の新規作成を開始する",
+        required: true,
+        substeps: [
+          {
+            text: "本棚画面の「タイトルの新規作成」セクションで、右端の「紙書籍」カードをタップします。",
+            highlight: "📍 「タイトルの新規作成」→ 右端「＋ 紙書籍」",
+          },
+          {
+            text: "「ペーパーバックの詳細情報」入力画面が開きます。これが最初の入力ステップです。",
+          },
+        ],
+      },
+    ],
+  },
   {
     id: "details",
     label: "詳細情報",
     emoji: "📝",
-    note: "「保存して続行」をタップすると次のステップへ進めます。",
-    sections: [
+    description: "本のタイトル・著者・説明文などを入力します。「保存して続行」で次へ進みます。",
+    steps: [
       {
-        title: "言語",
-        items: [
+        id: "d_lang",
+        title: "言語を選択する",
+        required: true,
+        substeps: [
           {
-            id: "d_lang",
-            label: "言語",
-            required: true,
-            tip: "「日本語」を選択してください。絵本の本文が日本語で書かれている場合はこれを選びます。",
+            text: "「言語」のドロップダウンから「日本語」を選択します。",
+            highlight: "📍 画面上部「言語」のプルダウン",
+            example: "選択値：日本語",
           },
         ],
       },
       {
-        title: "本のタイトル",
-        items: [
+        id: "d_title",
+        title: "本のタイトルを入力する",
+        required: true,
+        substeps: [
           {
-            id: "d_title",
-            label: "本のタイトル",
-            required: true,
-            tip: "表紙に書かれているタイトルをそのまま入力します。出版後72時間以内のみ変更できます。",
+            text: "「本のタイトル」欄に、表紙に書いたタイトルをそのまま入力します。",
+            highlight: "📍「本のタイトル」テキスト欄",
+            example: "入力例：かぞくのひ",
           },
           {
-            id: "d_title_kana",
-            label: "タイトルのフリガナ",
-            required: true,
-            tip: "タイトルをカタカナで入力します（例：カゾクノヒ）。",
+            text: "「タイトルのフリガナ」欄に、カタカナでフリガナを入力します。",
+            highlight: "📍「タイトルのフリガナ」テキスト欄",
+            example: "入力例：カゾクノヒ",
           },
           {
-            id: "d_subtitle",
-            label: "サブタイトル",
-            required: false,
-            tip: "サブタイトルがある場合のみ入力します。なければ空欄でOKです。",
-          },
-          {
-            id: "d_subtitle_kana",
-            label: "サブタイトルのフリガナ",
-            required: false,
-            tip: "サブタイトルがある場合のみ入力します。",
+            text: "「サブタイトル」と「サブタイトルのフリガナ」は、サブタイトルがない場合は空欄のままでOKです。",
+            note: "サブタイトルは任意項目です。入力しなくても出版できます。",
           },
         ],
       },
       {
-        title: "シリーズ",
-        items: [
+        id: "d_series",
+        title: "シリーズ情報（任意）",
+        required: false,
+        substeps: [
           {
-            id: "d_series",
-            label: "シリーズ情報（シリーズのタイトル・巻・フリガナ）",
-            required: false,
-            tip: "1冊目の単発出版の場合は空欄でOKです。シリーズ化する予定がある場合のみ入力します。",
+            text: "1冊目の単発出版の場合は、「シリーズ情報」は空欄のままでOKです。",
+            note: "シリーズ化する予定がある場合のみ「シリーズのタイトル」「巻」を入力します。",
           },
         ],
       },
       {
-        title: "版",
-        items: [
+        id: "d_edition",
+        title: "版（任意）",
+        required: false,
+        substeps: [
           {
-            id: "d_edition",
-            label: "版",
-            required: false,
-            tip: "初めて出版する場合は空欄でOKです。改訂版を出す場合に「第2版」などと入力します。",
+            text: "初めて出版する場合は「版」欄は空欄のままでOKです。",
+            note: "改訂版を出す場合に「第2版」などと入力します。",
           },
         ],
       },
       {
-        title: "著者",
-        items: [
+        id: "d_author",
+        title: "著者名を入力する",
+        required: true,
+        substeps: [
           {
-            id: "d_author",
-            label: "主な著者等（氏名）",
-            required: true,
-            tip: "本名またはペンネームを入力します。出版後72時間以内のみ変更できます。",
+            text: "「主な著者等」欄に、本名またはペンネームを入力します。",
+            highlight: "📍「主な著者等」テキスト欄",
+            example: "入力例：山田 太郎（本名）\nまたは：えほん作家（ペンネーム）",
           },
           {
-            id: "d_author_kana",
-            label: "著者のフリガナ",
-            required: true,
-            tip: "著者名をカタカナで入力します。",
+            text: "その下の欄に著者名のフリガナをカタカナで入力します。",
+            example: "入力例：ヤマダ タロウ",
           },
-        ],
-      },
-      {
-        title: "著者等（共著者・イラストレーターなど）",
-        items: [
           {
-            id: "d_coauthor",
-            label: "著者等（氏名・フリガナ）",
-            required: false,
-            tip: "共著者やイラストレーターがいる場合に追加します。1人で制作した場合は空欄でOKです。最大9人まで追加できます。",
+            text: "「著者等」（共著者・イラストレーターなど）は、1人で制作した場合は空欄のままでOKです。",
+            note: "共著者やイラストレーターがいる場合は「他を追加」ボタンから追加できます。",
           },
         ],
       },
       {
-        title: "内容紹介",
-        items: [
+        id: "d_description",
+        title: "内容紹介を入力する",
+        required: true,
+        substeps: [
           {
-            id: "d_description",
-            label: "内容紹介",
-            required: true,
-            tip: "Amazonの商品ページに表示される説明文です。絵本のあらすじや対象年齢を書きましょう。最大4000文字。読者が「読んでみたい」と思えるような文章を心がけましょう。",
+            text: "「内容紹介」のテキストエリアに、Amazonの商品ページに表示される説明文を入力します。",
+            highlight: "📍「内容紹介」テキストエリア（大きな入力欄）",
+            example: "入力例：\nかぞくのえがおにまつわるはなしです。\n対象年齢：幼児〜小学校低学年\n家族みんなで楽しめる絵本です。",
+          },
+          {
+            text: "最大4000文字まで入力できます。読者が「読んでみたい」と思えるような文章を書きましょう。",
+            note: "残り文字数は入力欄の右下に表示されます。",
           },
         ],
       },
       {
-        title: "出版に関して必要な権利",
-        items: [
+        id: "d_rights",
+        title: "著作権の選択",
+        required: true,
+        substeps: [
           {
-            id: "d_rights",
-            label: "著作権の選択",
-            required: true,
-            tip: "自分で作った作品の場合は「私は著作権を所有し、出版に関して必要な権利を保有しています」を選択します。",
+            text: "「出版に関して必要な権利」で、「私は著作権を所有し、出版に関して必要な権利を保有しています」のラジオボタンを選択します。",
+            highlight: "📍 上のラジオボタン「私は著作権を所有し…」を選択",
+            note: "自分で作った作品を出版する場合は必ずこちらを選択します。",
           },
         ],
       },
       {
-        title: "主な対象読者",
-        items: [
+        id: "d_audience",
+        title: "主な対象読者を設定する",
+        required: true,
+        substeps: [
           {
-            id: "d_adult",
-            label: "露骨な性的表現を含む画像またはタイトル",
-            required: true,
-            tip: "絵本の場合は「いいえ」を選択します。",
+            text: "「露骨な性的表現を含む画像またはタイトル」の質問に「いいえ」を選択します。",
+            highlight: "📍「いいえ」のラジオボタンを選択",
           },
           {
-            id: "d_age",
-            label: "対象年齢（最少年齢・最高年齢）",
-            required: false,
-            tip: "絵本の場合は「幼児〜10歳」などを設定すると検索で見つかりやすくなります。",
-          },
-        ],
-      },
-      {
-        title: "主なマーケットプレイス",
-        items: [
-          {
-            id: "d_marketplace",
-            label: "主なマーケットプレイス",
-            required: true,
-            tip: "日本向けに出版する場合は「Amazon.co.jp」を選択します。",
+            text: "「対象年齢」は任意ですが、絵本の場合は設定すると検索で見つかりやすくなります。",
+            example: "最少年齢：幼児\n最高年齢：10",
+            note: "対象年齢は任意項目です。設定しなくても出版できます。",
           },
         ],
       },
       {
-        title: "カテゴリー",
-        items: [
+        id: "d_marketplace",
+        title: "主なマーケットプレイスを選択する",
+        required: true,
+        substeps: [
           {
-            id: "d_category",
-            label: "カテゴリー（最大3つ）",
-            required: true,
-            tip: "「本 › 絵本・児童書 › 絵本」などを選択します。カテゴリーを設定することで検索で見つかりやすくなります。",
+            text: "「主なマーケットプレイス」のドロップダウンから「Amazon.co.jp」を選択します。",
+            highlight: "📍「主なマーケットプレイス」のプルダウン",
+            example: "選択値：Amazon.co.jp",
           },
         ],
       },
       {
-        title: "キーワード",
-        items: [
+        id: "d_category",
+        title: "カテゴリーを設定する",
+        required: true,
+        substeps: [
           {
-            id: "d_keywords",
-            label: "キーワード（最大7つ）",
-            required: false,
-            tip: "「家族」「子ども」「読み聞かせ」など、本の内容を表すキーワードを入力します。検索結果に影響します。",
+            text: "「カテゴリー」の「カテゴリーを編集」ボタンをタップします。",
+            highlight: "📍「カテゴリーを編集」ボタン",
+          },
+          {
+            text: "「本 › 絵本・児童書 › 絵本」などのカテゴリーを選択します。最大3つまで設定できます。",
+            example: "推奨カテゴリー：\n本 › 絵本・児童書 › 絵本",
           },
         ],
       },
       {
-        title: "出版日・発売日",
-        items: [
+        id: "d_keywords",
+        title: "キーワードを入力する（任意）",
+        required: false,
+        substeps: [
           {
-            id: "d_pubdate",
-            label: "出版日",
-            required: true,
-            tip: "初めて出版する場合は「出版日と発売日は同じです」を選択します。",
+            text: "「キーワード」欄に、本の内容を表すキーワードを最大7つまで入力します。",
+            example: "入力例：\n家族　子ども　読み聞かせ\n絵本　幼児　贈り物",
+            note: "キーワードは任意ですが、設定するとAmazon検索で見つかりやすくなります。",
+          },
+        ],
+      },
+      {
+        id: "d_pubdate",
+        title: "出版日・発売日を設定する",
+        required: true,
+        substeps: [
+          {
+            text: "「出版日」で「出版日と発売日は同じです」を選択します（初めて出版する場合）。",
+            highlight: "📍「出版日と発売日は同じです」のラジオボタン",
           },
           {
-            id: "d_saledate",
-            label: "発売日",
-            required: true,
-            tip: "「本を今すぐ販売する」か「発売スケジュール設定」を選べます。すぐ販売したい場合は「今すぐ」を選択します。",
+            text: "「発売日」で「本を今すぐ販売する」または「発売スケジュール設定」を選びます。",
+            example: "すぐ販売したい場合：「本を今すぐ販売する」を選択\n予約受付したい場合：「発売スケジュール設定」で日付を指定",
+          },
+          {
+            text: "最後に画面下の「保存して続行」ボタンをタップして次のステップへ進みます。",
+            highlight: "📍 画面右下「保存して続行」（黄色ボタン）",
           },
         ],
       },
@@ -229,103 +282,153 @@ const TABS: Tab[] = [
     id: "content",
     label: "コンテンツ",
     emoji: "📄",
-    note: "このアプリで作成したPDFをここでアップロードします。「保存して続行」で価格設定へ進みます。",
-    sections: [
+    description: "このアプリで作成したPDFをここでアップロードします。",
+    steps: [
       {
-        title: "ISBN",
-        items: [
+        id: "c_isbn",
+        title: "ISBNを取得する（無料）",
+        required: true,
+        substeps: [
           {
-            id: "c_isbn",
-            label: "ISBN",
-            required: true,
-            tip: "「無料のKDP ISBNを使用」を選択して「ISBNを取得」をタップするだけでOKです。費用は一切かかりません。",
+            text: "「ISBN」セクションで「無料のKDP ISBNを使用」が選択されていることを確認します。",
+            highlight: "📍「無料のKDP ISBNを使用」のラジオボタン",
+          },
+          {
+            text: "「ISBNを取得」ボタンをタップします。自動的にISBNが割り当てられます。費用は一切かかりません。",
+            highlight: "📍「ISBNを取得」ボタン（グレーのボタン）",
+            note: "ISBNは本を識別するための番号です。KDPが無料で発行してくれます。",
           },
         ],
       },
       {
-        title: "印刷オプション",
-        items: [
+        id: "c_ink",
+        title: "インクと用紙のタイプを選択する",
+        required: true,
+        substeps: [
           {
-            id: "c_ink",
-            label: "インクと用紙のタイプ",
-            required: true,
-            tip: "絵本（カラー）の場合は「本文（プレミアム カラー）用紙（白）」を選択します。白黒の場合は「本文（白黒）用紙（白）」でコストを抑えられます。",
-          },
-          {
-            id: "c_size",
-            label: "判型（サイズ）",
-            required: true,
-            tip: "このアプリのPDFは「215.9 × 215.9 mm（8.5 × 8.5インチ）」に対応しています。同じサイズを選択してください。",
-          },
-          {
-            id: "c_bleed",
-            label: "裁ち落とし設定",
-            required: true,
-            tip: "このアプリのPDFは裁ち落とし対応です。「裁ち落とし（PDFのみ）」を選択してください。",
-          },
-          {
-            id: "c_finish",
-            label: "ペーパーバックの表紙仕上げ",
-            required: true,
-            tip: "「光沢なし」か「光沢あり」を選べます。絵本には光沢ありが映えますが、好みで選んでOKです。",
-          },
-          {
-            id: "c_direction",
-            label: "ページを読む方向",
-            required: true,
-            tip: "日本語の横書き絵本の場合は「左から右（横書き）」を選択します。",
+            text: "「印刷オプション」→「インクと用紙のタイプ」で、カラー絵本の場合は「本文（プレミアム カラー）用紙（白）」を選択します。",
+            highlight: "📍「本文（プレミアム カラー）用紙（白）」のカード",
+            example: "カラー絵本の場合：本文（プレミアム カラー）用紙（白）\nモノクロ絵本の場合：本文（白黒）用紙（白）",
+            note: "プレミアムカラーは印刷コストが高くなりますが、鮮やかなカラー印刷ができます。",
           },
         ],
       },
       {
-        title: "原稿（本文PDFのアップロード）",
-        items: [
+        id: "c_size",
+        title: "判型（本のサイズ）を選択する",
+        required: true,
+        substeps: [
           {
-            id: "c_manuscript",
-            label: "📤 原稿をアップロード",
-            required: true,
-            highlight: true,
-            tip: "このアプリで作成・ダウンロードしたPDFファイルをここでアップロードします。「原稿をアップロード」ボタンをタップしてPDFを選択してください。アップロード成功後、緑色のチェックマークが表示されます。",
+            text: "「判型」でこのアプリで作成したPDFのサイズと同じものを選択します。",
+            highlight: "📍「判型」のカード一覧",
+            example: "このアプリのPDF：215.9 × 215.9 mm（8.5 × 8.5インチ）\n→「215.9 x 215.9 mm」のカードを選択",
+            note: "判型とPDFのサイズが一致していないとエラーになります。このアプリは8.5×8.5インチ正方形で出力します。",
           },
         ],
       },
       {
-        title: "表紙（表紙PDFのアップロード）",
-        items: [
+        id: "c_bleed",
+        title: "裁ち落とし設定を選択する",
+        required: true,
+        substeps: [
           {
-            id: "c_cover",
-            label: "📤 表紙ファイルをアップロード",
-            required: true,
-            highlight: true,
-            tip: "表紙用のPDFをアップロードします。KDPのテンプレートを使って作成するか、このアプリの表紙ページをPDF化してアップロードします。「表紙ファイルをアップロード」ボタンをタップしてください。",
-          },
-          {
-            id: "c_barcode",
-            label: "表紙にバーコードが含まれていますか？",
-            required: true,
-            tip: "表紙にバーコードを自分で入れていない場合は、チェックを外したままにします（KDPが自動でバーコードを追加します）。",
+            text: "「裁ち落とし設定」で「裁ち落とし（PDFのみ）」を選択します。",
+            highlight: "📍「裁ち落とし（PDFのみ）」のカード",
+            note: "絵本のように画像がページの端まで広がる場合は「裁ち落とし」を選択します。",
           },
         ],
       },
       {
-        title: "AI生成コンテンツ",
-        items: [
+        id: "c_cover_finish",
+        title: "表紙仕上げを選択する",
+        required: true,
+        substeps: [
           {
-            id: "c_ai",
-            label: "AIツールの使用有無",
-            required: true,
-            tip: "このアプリのAI変換機能を使った場合は「はい」を選択します。テキスト・画像・翻訳それぞれについて使用したAIツール名（例：ChatGPT、Gemini）を入力します。",
+            text: "「ペーパーバックの表紙仕上げ」で「光沢なし」または「光沢あり」を選択します。",
+            highlight: "📍「光沢なし」または「光沢あり」のカード",
+            example: "マットな仕上がり：光沢なし（推奨）\nツヤのある仕上がり：光沢あり",
           },
         ],
       },
       {
-        title: "本のプレビュー",
-        items: [
+        id: "c_direction",
+        title: "ページを読む方向を選択する",
+        required: true,
+        substeps: [
           {
-            id: "c_preview",
-            label: "プレビューアーを起動",
-            required: false,
-            tip: "「プレビューアーを起動」をタップすると、実際の本の仕上がりを確認できます。アップロードしたPDFに問題がないか必ず確認しましょう。",
+            text: "「ページを読む方向」で「左から右（横書き）」を選択します。",
+            highlight: "📍「左から右（横書き）」のカード",
+            note: "日本語の絵本でも、横書きの場合は「左から右」を選択します。",
+          },
+        ],
+      },
+      {
+        id: "c_manuscript",
+        title: "原稿PDFをアップロードする ★このアプリのPDF★",
+        required: true,
+        substeps: [
+          {
+            text: "「原稿」セクションの「原稿をアップロード」ボタンをタップします。",
+            highlight: "📍「原稿をアップロード」（黄色ボタン）",
+          },
+          {
+            text: "このアプリの「絵本制作」タブで作成・保存したPDFファイルを選択します。",
+            example: "ファイル名の例：かぞくのひ.pdf\n※このアプリで「PDFを生成」した後、端末の「ファイル」アプリに保存されています",
+          },
+          {
+            text: "「原稿（ファイル名.pdf）を正常にアップロードしました」と表示されれば成功です。",
+            note: "アップロードには数分かかる場合があります。",
+          },
+        ],
+      },
+      {
+        id: "c_cover",
+        title: "表紙PDFをアップロードする",
+        required: true,
+        substeps: [
+          {
+            text: "「表紙」セクションの「表紙ファイルをアップロード」ボタンをタップします。",
+            highlight: "📍「表紙ファイルをアップロード」（黄色ボタン）",
+          },
+          {
+            text: "表紙のPDFファイルを選択します。KDPのテンプレートを使って作成した表紙PDFをアップロードします。",
+            example: "ファイル名の例：cover.pdf",
+            note: "表紙はKDPのカバークリエイターで作成するか、別途デザインしたPDFをアップロードします。「表紙のアップロードに成功しました」と表示されれば完了です。",
+          },
+        ],
+      },
+      {
+        id: "c_ai_content",
+        title: "AI生成コンテンツの申告",
+        required: true,
+        substeps: [
+          {
+            text: "「AI生成コンテンツ」の質問で「はい」を選択します（このアプリはAIを使用しています）。",
+            highlight: "📍「はい」のラジオボタンを選択",
+          },
+          {
+            text: "「テキスト」「画像」それぞれのドロップダウンで、AIの使用度合いを選択します。",
+            example: "テキスト：一部のセクション（最小限の編集あり）\n画像：多くのAI生成画像（広範な編集あり）",
+          },
+          {
+            text: "使用したAIツール名を入力します。",
+            example: "ツール名の例：ChatGPT、Gemini、Midjourney など",
+          },
+        ],
+      },
+      {
+        id: "c_preview",
+        title: "プレビューで確認する",
+        required: true,
+        substeps: [
+          {
+            text: "「本のプレビュー」セクションの「プレビューアーを起動」ボタンをタップして、本の見た目を確認します。",
+            highlight: "📍「プレビューアーを起動」（黄色ボタン）",
+            note: "プレビューでページの並び・文字の見え方・画像の位置を確認しましょう。問題があればPDFを修正して再アップロードします。",
+          },
+          {
+            text: "問題がなければ「保存して続行」をタップして価格設定へ進みます。",
+            highlight: "📍 画面右下「保存して続行」（黄色ボタン）",
           },
         ],
       },
@@ -334,79 +437,58 @@ const TABS: Tab[] = [
   {
     id: "pricing",
     label: "価格設定",
-    emoji: "💰",
-    note: "価格を設定したら「ペーパーバックを出版」をタップして完了です。審査に最大72時間かかります。",
-    sections: [
+    emoji: "💴",
+    description: "販売価格とロイヤリティを設定して出版します。",
+    steps: [
       {
-        title: "出版地域",
-        items: [
+        id: "p_territory",
+        title: "出版地域を選択する",
+        required: true,
+        substeps: [
           {
-            id: "p_territory",
-            label: "出版地域",
-            required: true,
-            tip: "「すべての地域（全世界での権利）」を選択すると、世界中のAmazonで販売できます。特定の国のみで販売したい場合は「特定の出版地域」を選びます。",
+            text: "「出版地域」で「すべての地域（全世界での権利）」を選択します。",
+            highlight: "📍「すべての地域（全世界での権利）」のラジオボタン",
+            note: "特定の国だけで販売したい場合は「特定の出版地域」を選択します。通常は「全世界」でOKです。",
           },
         ],
       },
       {
-        title: "主なマーケットプレイス",
-        items: [
+        id: "p_price",
+        title: "希望小売価格を入力する",
+        required: true,
+        substeps: [
           {
-            id: "p_marketplace",
-            label: "主なマーケットプレイス",
-            required: true,
-            tip: "詳細情報タブで選択したマーケットプレイス（Amazon.co.jp）が表示されます。変更する場合は詳細情報タブに戻ります。",
+            text: "「Amazon.co.jp（主なマーケットプレイス）」の「希望小売価格」欄に、販売したい価格を入力します。",
+            highlight: "📍「Amazon.co.jp」行の「希望小売価格」入力欄",
+            example: "入力例：1500（円）\n※最低価格：¥950、最高価格：¥30,000",
+          },
+          {
+            text: "価格を入力すると、右側に「ロイヤリティ」（あなたが受け取る金額）が自動計算されて表示されます。",
+            note: "ロイヤリティ = 希望小売価格 × 60% − 印刷コスト\n例：¥1,500 × 60% = ¥900 − 印刷コスト¥475 = ¥425（1冊あたりの収益）",
+          },
+          {
+            text: "「この価格をすべてのマーケットプレイスの基準にする」リンクをタップすると、他の国の価格も自動換算されます。",
+            highlight: "📍「この価格をすべてのマーケットプレイスの基準にする」リンク",
           },
         ],
       },
       {
-        title: "価格設定・ロイヤリティ・配信",
-        items: [
+        id: "p_publish",
+        title: "「ペーパーバックを出版」ボタンをタップする",
+        required: true,
+        substeps: [
           {
-            id: "p_price_jp",
-            label: "Amazon.co.jpの希望小売価格",
-            required: true,
-            tip: "販売価格を入力します（最低¥950〜最大¥30,000）。印刷コスト（例：¥475）を差し引いた60%がロイヤリティとして受け取れます。例：¥1,500で販売 → ロイヤリティ = (¥1,500 × 60%) − ¥475 = ¥425",
+            text: "ページ下部の利用規約を確認します。「『出版』をクリックすることによって、Kindleダイレクト・パブリッシング利用規約に同意し…」と書かれています。",
+            highlight: "📍 画面下部「利用規約」セクション",
           },
           {
-            id: "p_price_other",
-            label: "他のマーケットプレイスの価格",
-            required: false,
-            tip: "「この価格をすべてのマーケットプレイスの基準にする」をタップすると、自動で他の国の価格が設定されます。個別に変更することもできます。",
+            text: "準備ができたら画面右下の「ペーパーバックを出版」ボタンをタップします。",
+            highlight: "📍 画面右下「ペーパーバックを出版」（黄色ボタン）",
+            note: "アカウント情報（銀行口座など）が未設定の場合はボタンがグレーになります。先にアカウント設定を完了させてください。",
           },
-        ],
-      },
-      {
-        title: "利用規約",
-        items: [
           {
-            id: "p_tos",
-            label: "利用規約への同意",
-            required: true,
-            tip: "「ペーパーバックを出版」ボタンをタップすることで、KDPの利用規約に同意したことになります。",
-          },
-        ],
-      },
-      {
-        title: "サンプル版を依頼（任意）",
-        items: [
-          {
-            id: "p_proof",
-            label: "校正刷りを依頼",
-            required: false,
-            tip: "出版前に実際の印刷物を確認したい場合は「校正刷りを依頼」をタップします。費用がかかりますが、品質確認に役立ちます。",
-          },
-        ],
-      },
-      {
-        title: "出版",
-        items: [
-          {
-            id: "p_publish",
-            label: "🚀 ペーパーバックを出版",
-            required: true,
-            highlight: true,
-            tip: "すべての設定が完了したら「ペーパーバックを出版」ボタンをタップします。審査に最大72時間かかります。承認されるとAmazonで購入できるようになります。アカウント情報（銀行口座など）の設定が完了していないと出版できません。",
+            text: "出版申請が完了すると、本棚に「審査中」と表示されます。Amazonの審査には通常24〜72時間かかります。",
+            note: "審査が完了するとメールで通知が届きます。審査通過後、Amazonで購入可能になります。",
           },
         ],
       },
@@ -414,483 +496,399 @@ const TABS: Tab[] = [
   },
 ];
 
-// Collect all item IDs for progress calculation
-const ALL_ITEM_IDS = TABS.flatMap((tab) =>
-  tab.sections.flatMap((sec) => sec.items.map((item) => item.id))
-);
-const REQUIRED_ITEM_IDS = TABS.flatMap((tab) =>
-  tab.sections.flatMap((sec) =>
-    sec.items.filter((item) => item.required).map((item) => item.id)
-  )
-);
+const STORAGE_KEY = "kdp_guide_checked_v2";
 
-const STORAGE_KEY = "@kdp_checklist_v1";
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function Badge({ required }: { required: boolean }) {
-  return (
-    <View style={[styles.badge, required ? styles.badgeRequired : styles.badgeOptional]}>
-      <Text style={[styles.badgeText, required ? styles.badgeTextRequired : styles.badgeTextOptional]}>
-        {required ? "必須" : "任意"}
-      </Text>
-    </View>
-  );
-}
-
-function StepCard({
-  item,
-  checked,
-  onToggle,
-}: {
-  item: StepItem;
-  checked: boolean;
-  onToggle: (id: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const colors = useColors();
-
-  return (
-    <View
-      style={[
-        styles.stepCard,
-        {
-          backgroundColor: checked
-            ? colors.success + "12"
-            : item.highlight
-            ? colors.primary + "12"
-            : colors.surface,
-          borderColor: checked
-            ? colors.success
-            : item.highlight
-            ? colors.primary
-            : colors.border,
-          borderWidth: checked || item.highlight ? 1.5 : 1,
-        },
-      ]}
-    >
-      {/* Main row: checkbox + label + expand */}
-      <TouchableOpacity
-        style={styles.stepCardRow}
-        onPress={() => setExpanded((v) => !v)}
-        activeOpacity={0.75}
-      >
-        {/* Checkbox */}
-        <TouchableOpacity
-          style={[
-            styles.checkbox,
-            {
-              borderColor: checked ? colors.success : colors.border,
-              backgroundColor: checked ? colors.success : "transparent",
-            },
-          ]}
-          onPress={() => onToggle(item.id)}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          {checked && <Text style={styles.checkmark}>✓</Text>}
-        </TouchableOpacity>
-
-        {/* Label area */}
-        <View style={styles.stepCardLabelArea}>
-          <Badge required={item.required} />
-          <Text
-            style={[
-              styles.stepLabel,
-              {
-                color: checked
-                  ? colors.success
-                  : item.highlight
-                  ? colors.primary
-                  : colors.foreground,
-                textDecorationLine: checked ? "line-through" : "none",
-                opacity: checked ? 0.75 : 1,
-              },
-            ]}
-          >
-            {item.label}
-          </Text>
-        </View>
-
-        {/* Expand chevron */}
-        <Text style={[styles.chevron, { color: colors.muted }]}>
-          {expanded ? "▲" : "▼"}
-        </Text>
-      </TouchableOpacity>
-
-      {/* Tip box */}
-      {expanded && (
-        <View style={[styles.tipBox, { backgroundColor: colors.background, borderColor: colors.border }]}>
-          <Text style={[styles.tipText, { color: colors.foreground }]}>{item.tip}</Text>
-          <TouchableOpacity
-            style={[
-              styles.tipCheckBtn,
-              { backgroundColor: checked ? colors.border : colors.success },
-            ]}
-            onPress={() => onToggle(item.id)}
-          >
-            <Text style={styles.tipCheckBtnText}>
-              {checked ? "✓ 完了済み（タップで解除）" : "完了としてマーク ✓"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
-    </View>
-  );
-}
-
-function SectionBlock({
-  section,
-  checkedIds,
-  onToggle,
-}: {
-  section: Section;
-  checkedIds: Set<string>;
-  onToggle: (id: string) => void;
-}) {
-  const colors = useColors();
-  const doneCount = section.items.filter((i) => checkedIds.has(i.id)).length;
-  const total = section.items.length;
-
-  return (
-    <View style={styles.sectionBlock}>
-      <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: colors.muted }]}>{section.title}</Text>
-        <Text style={[styles.sectionCount, { color: doneCount === total ? colors.success : colors.muted }]}>
-          {doneCount}/{total}
-        </Text>
-      </View>
-      {section.items.map((item) => (
-        <StepCard
-          key={item.id}
-          item={item}
-          checked={checkedIds.has(item.id)}
-          onToggle={onToggle}
-        />
-      ))}
-    </View>
-  );
-}
-
-// ─── Progress Bar Component ───────────────────────────────────────────────────
-
-function ProgressSummary({
-  checkedIds,
-  colors,
-}: {
-  checkedIds: Set<string>;
-  colors: ReturnType<typeof useColors>;
-}) {
-  const totalRequired = REQUIRED_ITEM_IDS.length;
-  const doneRequired = REQUIRED_ITEM_IDS.filter((id) => checkedIds.has(id)).length;
-  const totalAll = ALL_ITEM_IDS.length;
-  const doneAll = ALL_ITEM_IDS.filter((id) => checkedIds.has(id)).length;
-  const pct = totalRequired > 0 ? Math.round((doneRequired / totalRequired) * 100) : 0;
-
-  return (
-    <View style={[styles.progressSummary, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <View style={styles.progressSummaryTop}>
-        <Text style={[styles.progressSummaryTitle, { color: colors.foreground }]}>
-          出版作業の進捗
-        </Text>
-        <Text style={[styles.progressSummaryPct, { color: pct === 100 ? colors.success : colors.primary }]}>
-          {pct}%
-        </Text>
-      </View>
-      {/* Bar */}
-      <View style={[styles.progressBarBg, { backgroundColor: colors.border }]}>
-        <View
-          style={[
-            styles.progressBarFill,
-            {
-              width: `${pct}%` as `${number}%`,
-              backgroundColor: pct === 100 ? colors.success : colors.primary,
-            },
-          ]}
-        />
-      </View>
-      <Text style={[styles.progressSummarySub, { color: colors.muted }]}>
-        必須項目 {doneRequired}/{totalRequired} 完了　全項目 {doneAll}/{totalAll} 完了
-      </Text>
-      {pct === 100 && (
-        <View style={[styles.completeBanner, { backgroundColor: colors.success + "18" }]}>
-          <Text style={[styles.completeBannerText, { color: colors.success }]}>
-            🎉 必須項目がすべて完了しました！KDPで出版できます。
-          </Text>
-        </View>
-      )}
-    </View>
-  );
-}
-
-// ─── Main Screen ──────────────────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────
+// Main Component
+// ─────────────────────────────────────────────
 export default function KdpGuideScreen() {
-  const [activeTab, setActiveTab] = useState<string>("details");
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
-  const [loaded, setLoaded] = useState(false);
   const colors = useColors();
+  const [activePhaseIdx, setActivePhaseIdx] = useState(0);
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [expandedSteps, setExpandedSteps] = useState<Record<string, boolean>>({});
+  const scrollRef = useRef<ScrollView>(null);
 
-  // Load persisted checklist state
+  // Load saved state
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY)
-      .then((raw) => {
-        if (raw) {
-          const arr: string[] = JSON.parse(raw);
-          setCheckedIds(new Set(arr));
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoaded(true));
+    AsyncStorage.getItem(STORAGE_KEY).then((val) => {
+      if (val) setChecked(JSON.parse(val));
+    });
   }, []);
 
-  // Persist on change
-  const persistChecked = useCallback((next: Set<string>) => {
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify([...next])).catch(() => {});
+  const saveChecked = useCallback((next: Record<string, boolean>) => {
+    setChecked(next);
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   }, []);
 
-  const handleToggle = useCallback(
-    (id: string) => {
-      setCheckedIds((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) {
-          next.delete(id);
-        } else {
-          next.add(id);
-        }
-        persistChecked(next);
-        return next;
-      });
-    },
-    [persistChecked]
-  );
+  const toggleCheck = useCallback((id: string) => {
+    setChecked((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
-  const handleReset = useCallback(() => {
-    Alert.alert(
-      "チェックリストをリセット",
-      "すべてのチェックを外しますか？この操作は元に戻せません。",
-      [
-        { text: "キャンセル", style: "cancel" },
-        {
-          text: "リセット",
-          style: "destructive",
-          onPress: () => {
-            const empty = new Set<string>();
-            setCheckedIds(empty);
-            persistChecked(empty);
-          },
-        },
-      ]
-    );
-  }, [persistChecked]);
+  const toggleExpand = useCallback((id: string) => {
+    setExpandedSteps((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
 
-  const currentTab = TABS.find((t) => t.id === activeTab) ?? TABS[0];
-  const currentTabIdx = TABS.indexOf(currentTab);
+  const resetAll = useCallback(() => {
+    saveChecked({});
+    setExpandedSteps({});
+  }, [saveChecked]);
 
-  // Tab-level progress
-  const tabProgress = (tab: Tab) => {
-    const ids = tab.sections.flatMap((s) => s.items.map((i) => i.id));
-    const done = ids.filter((id) => checkedIds.has(id)).length;
-    return { done, total: ids.length };
-  };
+  // Progress calculation
+  const allRequiredSteps = PHASES.flatMap((p) => p.steps.filter((s) => s.required));
+  const checkedRequired = allRequiredSteps.filter((s) => checked[s.id]).length;
+  const progressPct = allRequiredSteps.length > 0
+    ? Math.round((checkedRequired / allRequiredSteps.length) * 100)
+    : 0;
 
-  if (!loaded) return null;
+  const phase = PHASES[activePhaseIdx];
+  const phaseRequired = phase.steps.filter((s) => s.required);
+  const phaseChecked = phaseRequired.filter((s) => checked[s.id]).length;
 
   return (
     <ScreenContainer containerClassName="bg-background">
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <View style={styles.headerRow}>
+      {/* ── Header ── */}
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <View style={styles.headerTop}>
           <View style={{ flex: 1 }}>
-            <Text style={[styles.headerTitle, { color: colors.foreground }]}>KDP出版ガイド</Text>
+            <Text style={[styles.headerTitle, { color: colors.foreground }]}>
+              📚 KDP出版ガイド
+            </Text>
             <Text style={[styles.headerSub, { color: colors.muted }]}>
               Amazon KDPでペーパーバックを出版する手順
             </Text>
           </View>
-          <View style={styles.headerActions}>
-            <TouchableOpacity
-              style={[styles.resetBtn, { borderColor: colors.border }]}
-              onPress={handleReset}
-            >
-              <Text style={[styles.resetBtnText, { color: colors.muted }]}>リセット</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.kdpLinkBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary }]}
-              onPress={() => Linking.openURL("https://kdp.amazon.co.jp/ja_JP/")}
-            >
-              <Text style={[styles.kdpLinkText, { color: colors.primary }]}>KDPを開く 🌐</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={[styles.resetBtn, { borderColor: colors.border }]}
+            onPress={resetAll}
+          >
+            <Text style={[styles.resetBtnText, { color: colors.muted }]}>リセット</Text>
+          </TouchableOpacity>
         </View>
+
+        {/* Overall progress bar */}
+        <View style={styles.progressRow}>
+          <View style={[styles.progressBarBg, { backgroundColor: colors.border, flex: 1 }]}>
+            <View
+              style={[
+                styles.progressBarFill,
+                { backgroundColor: colors.primary, width: `${progressPct}%` as any },
+              ]}
+            />
+          </View>
+          <Text style={[styles.progressPct, { color: colors.primary }]}>
+            {progressPct}%
+          </Text>
+        </View>
+        <Text style={[styles.progressLabel, { color: colors.muted }]}>
+          必須ステップ {checkedRequired}/{allRequiredSteps.length} 完了
+        </Text>
       </View>
 
-      {/* Tab Selector */}
-      <View style={[styles.tabBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        {TABS.map((tab) => {
-          const { done, total } = tabProgress(tab);
-          const isActive = activeTab === tab.id;
-          const allDone = done === total;
+      {/* ── Phase Tab Bar ── */}
+      <View style={[styles.tabBar, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+        {PHASES.map((p, idx) => {
+          const isActive = idx === activePhaseIdx;
+          const pReq = p.steps.filter((s) => s.required);
+          const pDone = pReq.filter((s) => checked[s.id]).length;
+          const allDone = pReq.length > 0 && pDone === pReq.length;
           return (
             <TouchableOpacity
-              key={tab.id}
+              key={p.id}
               style={[
                 styles.tabItem,
-                isActive && { borderBottomColor: colors.primary, borderBottomWidth: 2.5 },
+                isActive && { borderBottomColor: colors.primary },
               ]}
-              onPress={() => setActiveTab(tab.id)}
-              activeOpacity={0.7}
+              onPress={() => {
+                setActivePhaseIdx(idx);
+                scrollRef.current?.scrollTo({ y: 0, animated: true });
+              }}
             >
-              <Text style={styles.tabEmoji}>{allDone ? "✅" : tab.emoji}</Text>
+              <Text style={styles.tabEmoji}>{allDone ? "✅" : p.emoji}</Text>
               <Text
                 style={[
                   styles.tabLabel,
                   { color: isActive ? colors.primary : colors.muted },
                 ]}
               >
-                {tab.label}
+                {p.label}
               </Text>
-              <Text style={[styles.tabProgress, { color: allDone ? colors.success : colors.muted }]}>
-                {done}/{total}
-              </Text>
+              {pReq.length > 0 && (
+                <Text style={[styles.tabSub, { color: isActive ? colors.primary : colors.muted }]}>
+                  {pDone}/{pReq.length}
+                </Text>
+              )}
             </TouchableOpacity>
           );
         })}
       </View>
 
-      {/* Content */}
+      {/* ── Content ── */}
       <ScrollView
+        ref={scrollRef}
         style={{ flex: 1 }}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 40 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Overall Progress Summary (only on first tab) */}
-        {activeTab === "details" && (
-          <ProgressSummary checkedIds={checkedIds} colors={colors} />
-        )}
-
-        {/* Note Banner */}
-        {currentTab.note && (
-          <View style={[styles.noteBanner, { backgroundColor: colors.primary + "15", borderColor: colors.primary }]}>
-            <Text style={[styles.noteText, { color: colors.primary }]}>
-              💡 {currentTab.note}
-            </Text>
-          </View>
-        )}
-
-        {/* Legend */}
-        <View style={[styles.legend, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <View style={styles.legendRow}>
-            <View style={styles.legendItem}>
-              <View style={[styles.badge, styles.badgeRequired]}>
-                <Text style={[styles.badgeText, styles.badgeTextRequired]}>必須</Text>
-              </View>
-              <Text style={[styles.legendText, { color: colors.muted }]}>入力が必要</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.badge, styles.badgeOptional]}>
-                <Text style={[styles.badgeText, styles.badgeTextOptional]}>任意</Text>
-              </View>
-              <Text style={[styles.legendText, { color: colors.muted }]}>入力しなくてもOK</Text>
-            </View>
-          </View>
-          <Text style={[styles.legendHint, { color: colors.muted }]}>
-            ☑ チェックボックスをタップして進捗を記録できます
+        {/* Phase description */}
+        <View style={[styles.phaseDesc, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.phaseDescText, { color: colors.foreground }]}>
+            {phase.emoji}  {phase.description}
           </Text>
+          {phaseRequired.length > 0 && (
+            <Text style={[styles.phaseDescSub, { color: colors.muted }]}>
+              このパートの必須ステップ：{phaseChecked}/{phaseRequired.length} 完了
+            </Text>
+          )}
         </View>
 
-        {/* Sections */}
-        {currentTab.sections.map((section, i) => (
-          <SectionBlock
-            key={i}
-            section={section}
-            checkedIds={checkedIds}
-            onToggle={handleToggle}
-          />
-        ))}
+        {/* KDP link button (shown on signin phase) */}
+        {activePhaseIdx === 0 && (
+          <TouchableOpacity
+            style={[styles.kdpLinkBtn, { backgroundColor: colors.primary }]}
+            onPress={() => Linking.openURL("https://kdp.amazon.co.jp")}
+          >
+            <Text style={styles.kdpLinkText}>🌐 Amazon KDPを開く</Text>
+          </TouchableOpacity>
+        )}
 
-        {/* Navigation Buttons */}
+        {/* Steps */}
+        {phase.steps.map((step, stepIdx) => {
+          const isExpanded = expandedSteps[step.id] !== false; // default open
+          const isChecked = !!checked[step.id];
+
+          return (
+            <View key={step.id} style={styles.stepBlock}>
+              {/* Step header row */}
+              <TouchableOpacity
+                style={[
+                  styles.stepHeader,
+                  {
+                    backgroundColor: isChecked
+                      ? colors.primary + "18"
+                      : colors.surface,
+                    borderColor: isChecked ? colors.primary : colors.border,
+                  },
+                ]}
+                onPress={() => toggleExpand(step.id)}
+                activeOpacity={0.75}
+              >
+                {/* Checkbox */}
+                <TouchableOpacity
+                  style={[
+                    styles.checkbox,
+                    {
+                      borderColor: isChecked ? colors.primary : colors.border,
+                      backgroundColor: isChecked ? colors.primary : "transparent",
+                    },
+                  ]}
+                  onPress={() => toggleCheck(step.id)}
+                >
+                  {isChecked && (
+                    <Text style={styles.checkmark}>✓</Text>
+                  )}
+                </TouchableOpacity>
+
+                {/* Step number + title */}
+                <View style={{ flex: 1 }}>
+                  <View style={styles.stepTitleRow}>
+                    <Text style={[styles.stepNum, { color: colors.muted }]}>
+                      Step {stepIdx + 1}
+                    </Text>
+                    {!step.required && (
+                      <View style={[styles.optionalBadge, { backgroundColor: colors.border }]}>
+                        <Text style={[styles.optionalBadgeText, { color: colors.muted }]}>任意</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text
+                    style={[
+                      styles.stepTitle,
+                      {
+                        color: isChecked ? colors.primary : colors.foreground,
+                        textDecorationLine: isChecked ? "line-through" : "none",
+                      },
+                    ]}
+                  >
+                    {step.title}
+                  </Text>
+                </View>
+
+                {/* Expand chevron */}
+                <Text style={[styles.chevron, { color: colors.muted }]}>
+                  {isExpanded ? "▲" : "▼"}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Substeps */}
+              {isExpanded && (
+                <View style={[styles.substepsContainer, { borderColor: colors.border, backgroundColor: colors.background }]}>
+                  {step.substeps.map((sub, subIdx) => (
+                    <View key={subIdx} style={styles.substepItem}>
+                      {/* Substep number + text */}
+                      <View style={styles.substepRow}>
+                        <View style={[styles.substepNumCircle, { backgroundColor: colors.primary }]}>
+                          <Text style={styles.substepNum}>{subIdx + 1}</Text>
+                        </View>
+                        <Text style={[styles.substepText, { color: colors.foreground }]}>
+                          {sub.text}
+                        </Text>
+                      </View>
+
+                      {/* Highlight box (画面上の場所) */}
+                      {sub.highlight && (
+                        <View style={[styles.highlightBox, { backgroundColor: "#EFF6FF", borderColor: "#3B82F6" }]}>
+                          <Text style={[styles.highlightText, { color: "#1D4ED8" }]}>
+                            {sub.highlight}
+                          </Text>
+                        </View>
+                      )}
+
+                      {/* Example box */}
+                      {sub.example && (
+                        <View style={[styles.exampleBox, { backgroundColor: "#FFFBEB", borderColor: "#F59E0B" }]}>
+                          <Text style={[styles.exampleLabel, { color: "#92400E" }]}>📝 入力例</Text>
+                          <Text style={[styles.exampleText, { color: "#78350F" }]}>{sub.example}</Text>
+                        </View>
+                      )}
+
+                      {/* Note box */}
+                      {sub.note && (
+                        <View style={[styles.noteBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                          <Text style={[styles.noteText, { color: colors.muted }]}>
+                            💡 {sub.note}
+                          </Text>
+                        </View>
+                      )}
+
+                      {/* Divider between substeps */}
+                      {subIdx < step.substeps.length - 1 && (
+                        <View style={[styles.substepDivider, { backgroundColor: colors.border }]} />
+                      )}
+                    </View>
+                  ))}
+
+                  {/* Mark as done button */}
+                  <TouchableOpacity
+                    style={[
+                      styles.doneBtn,
+                      {
+                        backgroundColor: isChecked ? colors.border : colors.primary,
+                      },
+                    ]}
+                    onPress={() => toggleCheck(step.id)}
+                  >
+                    <Text style={[styles.doneBtnText, { color: isChecked ? colors.muted : "#fff" }]}>
+                      {isChecked ? "✓ 完了済み（タップで取り消し）" : "✅ このステップを完了にする"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          );
+        })}
+
+        {/* Phase navigation */}
         <View style={styles.navButtons}>
-          {currentTabIdx > 0 && (
+          {activePhaseIdx > 0 && (
             <TouchableOpacity
               style={[styles.navBtn, styles.navBtnBack, { borderColor: colors.border }]}
-              onPress={() => setActiveTab(TABS[currentTabIdx - 1].id)}
-              activeOpacity={0.75}
+              onPress={() => {
+                setActivePhaseIdx((i) => i - 1);
+                scrollRef.current?.scrollTo({ y: 0, animated: true });
+              }}
             >
-              <Text style={[styles.navBtnText, { color: colors.muted }]}>← 前のステップ</Text>
+              <Text style={[styles.navBtnText, { color: colors.foreground }]}>
+                ← 前のステップ
+              </Text>
             </TouchableOpacity>
           )}
-          {currentTabIdx < TABS.length - 1 && (
+          {activePhaseIdx < PHASES.length - 1 && (
             <TouchableOpacity
               style={[styles.navBtn, styles.navBtnNext, { backgroundColor: colors.primary }]}
-              onPress={() => setActiveTab(TABS[currentTabIdx + 1].id)}
-              activeOpacity={0.75}
+              onPress={() => {
+                setActivePhaseIdx((i) => i + 1);
+                scrollRef.current?.scrollTo({ y: 0, animated: true });
+              }}
             >
               <Text style={styles.navBtnNextText}>次のステップ →</Text>
             </TouchableOpacity>
           )}
-          {currentTabIdx === TABS.length - 1 && (
-            <TouchableOpacity
-              style={[styles.navBtn, styles.navBtnNext, { backgroundColor: "#FF9900" }]}
-              onPress={() => Linking.openURL("https://kdp.amazon.co.jp/ja_JP/")}
-              activeOpacity={0.75}
-            >
-              <Text style={styles.navBtnNextText}>🚀 KDPで出版する</Text>
-            </TouchableOpacity>
+          {activePhaseIdx === PHASES.length - 1 && progressPct === 100 && (
+            <View style={[styles.completeBanner, { backgroundColor: "#D1FAE5", borderColor: "#10B981" }]}>
+              <Text style={[styles.completeBannerText, { color: "#065F46" }]}>
+                🎉 すべてのステップが完了しました！出版おめでとうございます！
+              </Text>
+            </View>
           )}
         </View>
-
-        <View style={{ height: 24 }} />
       </ScrollView>
     </ScreenContainer>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────────
 const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 16,
     paddingTop: 14,
-    paddingBottom: 12,
+    paddingBottom: 10,
     borderBottomWidth: 0.5,
   },
-  headerRow: {
+  headerTop: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 8,
+    marginBottom: 10,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "700",
     marginBottom: 2,
   },
   headerSub: {
     fontSize: 12,
-  },
-  headerActions: {
-    flexDirection: "row",
-    gap: 6,
-    alignItems: "center",
-    flexShrink: 0,
+    lineHeight: 16,
   },
   resetBtn: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
+    flexShrink: 0,
   },
   resetBtnText: {
     fontSize: 12,
     fontWeight: "600",
   },
-  kdpLinkBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
+  progressRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
   },
-  kdpLinkText: {
-    fontSize: 12,
-    fontWeight: "600",
+  progressBarBg: {
+    height: 8,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  progressBarFill: {
+    height: 8,
+    borderRadius: 4,
+  },
+  progressPct: {
+    fontSize: 14,
+    fontWeight: "700",
+    width: 38,
+    textAlign: "right",
+  },
+  progressLabel: {
+    fontSize: 11,
   },
   tabBar: {
     flexDirection: "row",
@@ -904,138 +902,61 @@ const styles = StyleSheet.create({
     borderBottomColor: "transparent",
   },
   tabEmoji: {
-    fontSize: 16,
+    fontSize: 15,
     marginBottom: 1,
   },
   tabLabel: {
     fontSize: 11,
     fontWeight: "600",
   },
-  tabProgress: {
+  tabSub: {
     fontSize: 10,
     marginTop: 1,
   },
   scrollContent: {
     padding: 14,
-    paddingBottom: 32,
   },
-  // Overall progress summary
-  progressSummary: {
-    borderRadius: 12,
+  phaseDesc: {
+    borderRadius: 10,
     borderWidth: 1,
-    padding: 14,
+    padding: 12,
     marginBottom: 14,
   },
-  progressSummaryTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  progressSummaryTitle: {
+  phaseDescText: {
     fontSize: 14,
-    fontWeight: "700",
-  },
-  progressSummaryPct: {
-    fontSize: 22,
-    fontWeight: "800",
-  },
-  progressBarBg: {
-    height: 8,
-    borderRadius: 4,
-    overflow: "hidden",
-    marginBottom: 6,
-  },
-  progressBarFill: {
-    height: 8,
-    borderRadius: 4,
-  },
-  progressSummarySub: {
-    fontSize: 11,
-  },
-  completeBanner: {
-    marginTop: 10,
-    borderRadius: 8,
-    padding: 10,
-  },
-  completeBannerText: {
-    fontSize: 13,
     fontWeight: "600",
+    lineHeight: 20,
   },
-  // Note
-  noteBanner: {
-    borderRadius: 10,
-    borderWidth: 1,
-    padding: 12,
-    marginBottom: 12,
-  },
-  noteText: {
-    fontSize: 13,
-    lineHeight: 19,
-    fontWeight: "500",
-  },
-  // Legend
-  legend: {
-    borderRadius: 10,
-    borderWidth: 1,
-    padding: 12,
-    marginBottom: 14,
-    gap: 6,
-  },
-  legendRow: {
-    flexDirection: "row",
-    gap: 16,
-  },
-  legendItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  legendText: {
+  phaseDescSub: {
     fontSize: 12,
+    marginTop: 4,
   },
-  legendHint: {
-    fontSize: 11,
-    marginTop: 2,
-  },
-  // Section
-  sectionBlock: {
+  kdpLinkBtn: {
+    borderRadius: 10,
+    paddingVertical: 13,
+    alignItems: "center",
     marginBottom: 14,
   },
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 6,
-    marginLeft: 2,
-  },
-  sectionTitle: {
-    fontSize: 11,
+  kdpLinkText: {
+    color: "#fff",
+    fontSize: 15,
     fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
   },
-  sectionCount: {
-    fontSize: 11,
-    fontWeight: "600",
+  stepBlock: {
+    marginBottom: 10,
   },
-  // Step card
-  stepCard: {
+  stepHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 12,
     borderRadius: 10,
     borderWidth: 1,
-    marginBottom: 8,
-    overflow: "hidden",
-  },
-  stepCardRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 12,
-    gap: 10,
   },
   checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 7,
     borderWidth: 2,
     alignItems: "center",
     justifyContent: "center",
@@ -1043,77 +964,138 @@ const styles = StyleSheet.create({
   },
   checkmark: {
     color: "#fff",
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "800",
-    lineHeight: 16,
+    lineHeight: 18,
   },
-  stepCardLabelArea: {
-    flex: 1,
+  stepTitleRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    flexWrap: "wrap",
+    marginBottom: 2,
   },
-  stepLabel: {
-    fontSize: 13,
+  stepNum: {
+    fontSize: 11,
     fontWeight: "600",
-    flex: 1,
-    flexShrink: 1,
+  },
+  optionalBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  optionalBadgeText: {
+    fontSize: 10,
+    fontWeight: "600",
+  },
+  stepTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 20,
   },
   chevron: {
     fontSize: 10,
     flexShrink: 0,
   },
-  tipBox: {
-    marginHorizontal: 12,
-    marginBottom: 12,
-    borderRadius: 8,
+  substepsContainer: {
     borderWidth: 1,
-    padding: 10,
-    gap: 10,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: 10,
+    borderBottomRightRadius: 10,
+    overflow: "hidden",
+    paddingTop: 4,
   },
-  tipText: {
+  substepItem: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
+  substepRow: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    marginBottom: 8,
+  },
+  substepNumCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    marginTop: 1,
+  },
+  substepNum: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  substepText: {
+    fontSize: 14,
+    lineHeight: 21,
+    flex: 1,
+  },
+  highlightBox: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginBottom: 8,
+    marginLeft: 32,
+  },
+  highlightText: {
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 18,
+  },
+  exampleBox: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 8,
+    marginLeft: 32,
+  },
+  exampleLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  exampleText: {
     fontSize: 13,
     lineHeight: 20,
   },
-  tipCheckBtn: {
+  noteBox: {
+    borderWidth: 1,
     borderRadius: 8,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginBottom: 8,
+    marginLeft: 32,
+  },
+  noteText: {
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  substepDivider: {
+    height: 0.5,
+    marginVertical: 4,
+    marginLeft: 32,
+  },
+  doneBtn: {
+    marginHorizontal: 14,
+    marginVertical: 12,
+    borderRadius: 8,
+    paddingVertical: 10,
     alignItems: "center",
   },
-  tipCheckBtnText: {
-    color: "#fff",
+  doneBtnText: {
     fontSize: 13,
     fontWeight: "700",
   },
-  // Badge
-  badge: {
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 5,
-    flexShrink: 0,
-  },
-  badgeRequired: {
-    backgroundColor: "#EF444420",
-  },
-  badgeOptional: {
-    backgroundColor: "#6B728020",
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  badgeTextRequired: {
-    color: "#EF4444",
-  },
-  badgeTextOptional: {
-    color: "#6B7280",
-  },
-  // Nav buttons
   navButtons: {
     flexDirection: "row",
     gap: 10,
-    marginTop: 8,
+    marginTop: 12,
   },
   navBtn: {
     flex: 1,
@@ -1133,5 +1115,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     color: "#fff",
+  },
+  completeBanner: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    alignItems: "center",
+  },
+  completeBannerText: {
+    fontSize: 14,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 22,
   },
 });
